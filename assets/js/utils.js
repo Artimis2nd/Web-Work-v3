@@ -101,19 +101,137 @@ const Utils = (() => {
   }
 
   function escapeHtml(str) {
+    if (typeof document === 'undefined') {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
     const d = document.createElement('div');
     d.textContent = String(str ?? '');
-    return d.innerHTML;
+    return d.innerHTML !== undefined ? d.innerHTML : String(str ?? '');
   }
 
   const NAV_ITEMS = [
-    { href: 'index.html', label: 'หน้าแรก', icon: '&#128202;' },
-    { href: 'daily-log.html', label: 'บันทึกงานประจำวัน', icon: '&#128221;' },
-    { href: 'overview.html', label: 'สรุปภาพรวมงาน', icon: '&#128200;' },
-    { href: 'report.html', label: 'สรุปรายบุคคล', icon: '&#128100;' },
-    { href: 'pivot-report.html', label: 'สรุปรายวัน/ไซต์งาน', icon: '&#128203;' },
-    { href: 'workers.html', label: 'จัดการคนงาน', icon: '&#128119;' }
+    { href: 'index.html', label: 'หน้าแรก', icon: '&#128202;', title: 'หน้าแรก' },
+    { href: 'tasks.html', label: 'สั่งงานและติดตามงาน', icon: '📋', title: '📋 สั่งงานและติดตามงาน' },
+    { href: 'daily-log.html', label: 'บันทึกงานประจำวัน', icon: '&#128221;', title: 'บันทึกงานประจำวัน' },
+    { href: 'overview.html', label: 'สรุปภาพรวมงาน', icon: '&#128200;', title: 'สรุปภาพรวมงาน' },
+    { href: 'report.html', label: 'สรุปรายบุคคล', icon: '&#128100;', title: 'สรุปรายบุคคล' },
+    { href: 'pivot-report.html', label: 'สรุปรายวัน/ไซต์งาน', icon: '&#128203;', title: 'สรุปรายวัน/ไซต์งาน' },
+    { href: 'task-cost-report.html', label: 'สรุปต้นทุนตามงาน', icon: '📊', title: '📊 สรุปต้นทุนตามงาน' },
+    { href: 'workers.html', label: 'จัดการคนงาน', icon: '&#128119;', title: 'จัดการคนงาน' }
   ];
+
+  function normalizePageName(page) {
+    if (!page) return '';
+    const clean = String(page).split(/[?#]/)[0];
+    const parts = clean.split(/[/\\]/);
+    return parts[parts.length - 1];
+  }
+
+  function renderSidebar(activePage, container) {
+    const current = normalizePageName(activePage);
+    const html = NAV_ITEMS.map(item => {
+      const isActive = item.href === activePage || item.href === current;
+      return `
+        <a href="${item.href}" class="nav-tab ${isActive ? 'active' : ''}" title="${item.title || item.label}">
+          <span>${item.icon}</span><span>${item.label}</span>
+        </a>
+      `.trim();
+    }).join('\n');
+
+    if (container) {
+      if (typeof container === 'string') {
+        const el = document.querySelector(container);
+        if (el) el.innerHTML = html;
+      } else if (container && container.innerHTML !== undefined) {
+        container.innerHTML = html;
+      }
+    }
+    return html;
+  }
+
+  function renderTaskStatusBadge(status) {
+    const s = typeof status === 'string' ? status.trim() : '';
+    switch (s) {
+      case 'Pending':
+      case 'รอดำเนินการ':
+        return '<span class="badge badge-warning">รอดำเนินการ</span>';
+      case 'In Progress':
+      case 'กำลังดำเนินการ':
+      case 'กำลังทำ':
+        return '<span class="badge badge-info">กำลังดำเนินการ</span>';
+      case 'Blocked':
+      case 'ติดปัญหา':
+        return '<span class="badge badge-danger">ติดปัญหา</span>';
+      case 'Completed':
+      case 'เสร็จสมบูรณ์':
+      case 'เสร็จ':
+        return '<span class="badge badge-success">เสร็จสมบูรณ์</span>';
+      default:
+        return `<span class="badge">${escapeHtml(s || '-')}</span>`;
+    }
+  }
+
+  function renderProgressBar(percent, options = {}) {
+    let p = Math.round(Number(percent));
+    if (isNaN(p)) p = 0;
+    p = Math.max(0, Math.min(100, p));
+
+    let fillColor = 'var(--blueprint, #3D6B99)';
+    let colorClass = 'progress-bar-blue';
+
+    if (options.status === 'Blocked') {
+      fillColor = 'var(--red, #C1443C)';
+      colorClass = 'progress-bar-danger';
+    } else if (p >= 100 || options.status === 'Completed') {
+      fillColor = 'var(--green, #3F8F5F)';
+      colorClass = 'progress-bar-success';
+    } else if (p < 30) {
+      fillColor = 'var(--amber, #F2A93B)';
+      colorClass = 'progress-bar-warning';
+    }
+
+    if (options.color) {
+      fillColor = options.color;
+    }
+
+    const showText = options.showText !== false;
+    const textHtml = showText ? `<span class="progress-text font-mono text-xs font-semibold" style="min-width:38px;text-align:right;">${p}%</span>` : '';
+
+    return `<div class="progress-container flex items-center gap-2" title="${p}%" style="display:flex;align-items:center;gap:0.5rem;width:100%;"><div class="progress-track flex-1 bg-slate-200 rounded-full h-2 overflow-hidden" style="flex:1;background-color:#E2E8F0;min-width:50px;height:7px;border-radius:9999px;overflow:hidden;"><div class="progress-fill ${colorClass} h-full rounded-full transition-all duration-300" style="width:${p}%;background-color:${fillColor};height:100%;border-radius:9999px;"></div></div>${textHtml}</div>`.trim();
+  }
+
+  // Inject badge styles if running in browser
+  if (typeof document !== 'undefined') {
+    const styleId = 'wage-badge-styles';
+    if (!document.getElementById(styleId)) {
+      const styleEl = document.createElement('style');
+      styleEl.id = styleId;
+      styleEl.textContent = `
+        .badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 0.2rem 0.55rem;
+          border-radius: 9999px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          line-height: 1.2;
+          white-space: nowrap;
+        }
+        .badge-warning { background-color: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; }
+        .badge-info { background-color: #E0F2FE; color: #0369A1; border: 1px solid #BAE6FD; }
+        .badge-danger { background-color: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; }
+        .badge-success { background-color: #DCFCE7; color: #15803D; border: 1px solid #BBF7D0; }
+      `;
+      if (document.head) {
+        document.head.appendChild(styleEl);
+      }
+    }
+  }
 
   // ============================================================
   // หน้าต่างตั้งค่าการเชื่อมต่อ Supabase (Cloud Settings Modal)
@@ -189,11 +307,7 @@ const Utils = (() => {
   }
 
   function renderShell(activePage, pageTitle) {
-    const navHtml = NAV_ITEMS.map(item => `
-      <a href="${item.href}" class="nav-tab ${item.href === activePage ? 'active' : ''}">
-        <span>${item.icon}</span><span>${item.label}</span>
-      </a>
-    `).join('');
+    const navHtml = renderSidebar(activePage);
 
     document.getElementById('app-shell').innerHTML = `
       <div class="flex min-h-screen">
@@ -348,8 +462,21 @@ const Utils = (() => {
     errorBanner,
     escapeHtml,
     renderShell,
+    renderSidebar,
+    renderTaskStatusBadge,
+    renderProgressBar,
     compressImage,
     animateProgress,
-    openDbSettingsModal
+    openDbSettingsModal,
+    NAV_ITEMS
   };
 })();
+
+// ให้บริการผ่าน window.Utils และ window.WAGE_UTILS สำหรับเบราว์เซอร์ และ CommonJS สำหรับ Node.js
+if (typeof window !== 'undefined') {
+  window.Utils = Utils;
+  window.WAGE_UTILS = Utils;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = Utils;
+}
