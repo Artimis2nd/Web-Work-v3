@@ -7,7 +7,8 @@ const Api = (() => {
     WORKERS: 'WAGE_LOCAL_WORKERS',
     LOGS: 'WAGE_LOCAL_LOGS',
     IMAGES: 'WAGE_LOCAL_IMAGES',
-    BACKUPS: 'WAGE_LOCAL_BACKUPS'
+    BACKUPS: 'WAGE_LOCAL_BACKUPS',
+    TASKS: 'WAGE_LOCAL_TASKS'
   };
 
   function getConfig() {
@@ -154,24 +155,42 @@ const Api = (() => {
     }
   }
 
-  // แปลงแถวจาก Supabase (snake_case) เป็นรูปแบบเดียวกับระบบเดิม (PascalCase)
+  // แปลงแถวจาก Supabase (snake_case) เป็นรูปแบบเดียวกับระบบเดิม (PascalCase) พร้อมคงคีย์ snake_case
   function mapLogRowFromDb(r) {
+    const tid = r.task_id != null ? Number(r.task_id) : (r.TaskId != null ? Number(r.TaskId) : null);
     return {
-      ID: r.id,
-      GroupID: r.group_id,
-      Date: r.work_date,
-      Site: r.site,
-      JobDetail: r.job_detail || '',
-      RequestedBy: r.requested_by || '',
-      WorkerName: r.worker_name,
-      DailyWage: Number(r.daily_wage) || 0,
-      WageType: r.wage_type || 'hourly',
-      Hours: Number(r.hours) || 0,
-      OTHours: Number(r.ot_hours) || 0,
-      FixedAmount: Number(r.fixed_amount) || 0,
-      RawWage: Number(r.raw_wage) || 0,
-      TotalWithMarkup: Number(r.total_with_markup) || 0,
-      CreatedAt: r.created_at
+      ID: r.id ?? r.ID,
+      id: r.id ?? r.ID,
+      GroupID: r.group_id ?? r.GroupID,
+      group_id: r.group_id ?? r.GroupID,
+      Date: r.work_date ?? r.Date,
+      work_date: r.work_date ?? r.Date,
+      Site: r.site ?? r.Site,
+      site: r.site ?? r.Site,
+      JobDetail: r.job_detail ?? r.JobDetail ?? '',
+      job_detail: r.job_detail ?? r.JobDetail ?? '',
+      RequestedBy: r.requested_by ?? r.RequestedBy ?? '',
+      requested_by: r.requested_by ?? r.RequestedBy ?? '',
+      WorkerName: r.worker_name ?? r.WorkerName,
+      worker_name: r.worker_name ?? r.WorkerName,
+      DailyWage: Number(r.daily_wage ?? r.DailyWage) || 0,
+      daily_wage: Number(r.daily_wage ?? r.DailyWage) || 0,
+      WageType: r.wage_type ?? r.WageType ?? 'hourly',
+      wage_type: r.wage_type ?? r.WageType ?? 'hourly',
+      Hours: Number(r.hours ?? r.Hours) || 0,
+      hours: Number(r.hours ?? r.Hours) || 0,
+      OTHours: Number(r.ot_hours ?? r.OTHours) || 0,
+      ot_hours: Number(r.ot_hours ?? r.OTHours) || 0,
+      FixedAmount: Number(r.fixed_amount ?? r.FixedAmount) || 0,
+      fixed_amount: Number(r.fixed_amount ?? r.FixedAmount) || 0,
+      RawWage: Number(r.raw_wage ?? r.RawWage) || 0,
+      raw_wage: Number(r.raw_wage ?? r.RawWage) || 0,
+      TotalWithMarkup: Number(r.total_with_markup ?? r.TotalWithMarkup) || 0,
+      total_with_markup: Number(r.total_with_markup ?? r.TotalWithMarkup) || 0,
+      TaskId: tid,
+      task_id: tid,
+      CreatedAt: r.created_at ?? r.CreatedAt,
+      created_at: r.created_at ?? r.CreatedAt
     };
   }
 
@@ -199,15 +218,17 @@ const Api = (() => {
       if (filters.endDate) query += `&work_date=lte.${encodeURIComponent(filters.endDate)}`;
       if (filters.workerName) query += `&worker_name=eq.${encodeURIComponent(filters.workerName)}`;
       if (filters.groupId) query += `&group_id=eq.${encodeURIComponent(filters.groupId)}`;
+      if (filters.taskId != null) query += `&task_id=eq.${encodeURIComponent(filters.taskId)}`;
       const rows = await sbFetch(query);
       return (rows || []).map(mapLogRowFromDb);
     }
 
     let logs = readLocal(LOCAL_KEYS.LOGS, []);
-    if (filters.startDate) logs = logs.filter(r => r.Date >= filters.startDate);
-    if (filters.endDate) logs = logs.filter(r => r.Date <= filters.endDate);
-    if (filters.workerName) logs = logs.filter(r => r.WorkerName === filters.workerName);
-    if (filters.groupId) logs = logs.filter(r => String(r.GroupID) === String(filters.groupId));
+    if (filters.startDate) logs = logs.filter(r => (r.Date || r.work_date) >= filters.startDate);
+    if (filters.endDate) logs = logs.filter(r => (r.Date || r.work_date) <= filters.endDate);
+    if (filters.workerName) logs = logs.filter(r => (r.WorkerName || r.worker_name) === filters.workerName);
+    if (filters.groupId) logs = logs.filter(r => String(r.GroupID || r.group_id) === String(filters.groupId));
+    if (filters.taskId != null) logs = logs.filter(r => String(r.TaskId ?? r.task_id) === String(filters.taskId));
     return logs;
   }
 
@@ -413,6 +434,7 @@ const Api = (() => {
     const requestedBy = payload.requestedBy || '';
     const workers = payload.workers || [];
     const images = payload.images || [];
+    const taskId = payload.taskId != null ? Number(payload.taskId) : (payload.task_id != null ? Number(payload.task_id) : null);
     const now = new Date().toISOString();
 
     let imageUrls = [];
@@ -446,6 +468,7 @@ const Api = (() => {
         fixed_amount: Number(w.fixedAmount) || 0,
         raw_wage: rawWage,
         total_with_markup: totalWage,
+        task_id: taskId,
         created_at: now
       };
     });
@@ -457,7 +480,7 @@ const Api = (() => {
       });
     } else {
       const existing = readLocal(LOCAL_KEYS.LOGS, []);
-      let maxId = existing.reduce((m, r) => Math.max(m, Number(r.ID) || 0), 0);
+      let maxId = existing.reduce((m, r) => Math.max(m, Number(r.ID ?? r.id) || 0), 0);
       dbRows.forEach(r => {
         maxId++;
         existing.push(mapLogRowFromDb({ ...r, id: maxId }));
@@ -469,6 +492,7 @@ const Api = (() => {
       count: dbRows.length,
       totalMarkup,
       groupId,
+      taskId,
       imageCount: imageUrls.length
     };
   }
@@ -480,7 +504,7 @@ const Api = (() => {
       await sbFetch(`/rest/v1/log_images?group_id=eq.${encodeURIComponent(groupId)}`, { method: 'DELETE' });
       return { deleted: true };
     }
-    const existing = readLocal(LOCAL_KEYS.LOGS, []).filter(r => String(r.GroupID) !== String(groupId));
+    const existing = readLocal(LOCAL_KEYS.LOGS, []).filter(r => String(r.GroupID || r.group_id) !== String(groupId));
     writeLocal(LOCAL_KEYS.LOGS, existing);
     const imgMap = readLocal(LOCAL_KEYS.IMAGES, {});
     delete imgMap[groupId];
@@ -496,22 +520,26 @@ const Api = (() => {
     ]);
     if (!groupRows.length) throw new Error('ไม่พบใบงานที่ระบุ');
     const first = groupRows[0];
+    const firstTaskId = first.TaskId != null ? Number(first.TaskId) : (first.task_id != null ? Number(first.task_id) : null);
     const workers = groupRows.map(row => ({
-      workerName: row.WorkerName,
-      dailyWage: Number(row.DailyWage) || 0,
-      wageType: row.WageType || 'hourly',
-      hours: Number(row.Hours) || 0,
-      otHours: Number(row.OTHours) || 0,
-      fixedAmount: Number(row.FixedAmount) || 0,
-      RawWage: Number(row.RawWage) || 0,
-      TotalWithMarkup: Number(row.TotalWithMarkup) || 0
+      workerName: row.WorkerName || row.worker_name,
+      dailyWage: Number(row.DailyWage ?? row.daily_wage) || 0,
+      wageType: row.WageType || row.wage_type || 'hourly',
+      hours: Number(row.Hours ?? row.hours) || 0,
+      otHours: Number(row.OTHours ?? row.ot_hours) || 0,
+      fixedAmount: Number(row.FixedAmount ?? row.fixed_amount) || 0,
+      RawWage: Number(row.RawWage ?? row.raw_wage) || 0,
+      TotalWithMarkup: Number(row.TotalWithMarkup ?? row.total_with_markup) || 0,
+      TaskId: row.TaskId != null ? Number(row.TaskId) : (row.task_id != null ? Number(row.task_id) : null),
+      task_id: row.task_id != null ? Number(row.task_id) : (row.TaskId != null ? Number(row.TaskId) : null)
     }));
     return {
       groupId,
-      date: first.Date,
-      site: first.Site,
-      jobDetail: first.JobDetail,
-      requestedBy: first.RequestedBy,
+      date: first.Date || first.work_date,
+      site: first.Site || first.site,
+      jobDetail: first.JobDetail || first.job_detail,
+      requestedBy: first.RequestedBy || first.requested_by,
+      taskId: firstTaskId,
       imageUrls,
       workers
     };
@@ -526,6 +554,13 @@ const Api = (() => {
     const requestedBy = payload.requestedBy || '';
     const workers = payload.workers || [];
     const images = payload.images || [];
+    let taskId = payload.taskId != null ? Number(payload.taskId) : (payload.task_id != null ? Number(payload.task_id) : null);
+    if (taskId === null && payload.taskId === undefined && payload.task_id === undefined) {
+      const existingRows = await fetchAllLogRows({ groupId });
+      if (existingRows.length > 0 && (existingRows[0].TaskId != null || existingRows[0].task_id != null)) {
+        taskId = Number(existingRows[0].TaskId ?? existingRows[0].task_id);
+      }
+    }
     const now = new Date().toISOString();
 
     let finalUrls = [];
@@ -557,6 +592,7 @@ const Api = (() => {
         fixed_amount: Number(w.fixedAmount) || 0,
         raw_wage: rawWage,
         total_with_markup: totalWage,
+        task_id: taskId,
         created_at: now
       };
     });
@@ -568,8 +604,8 @@ const Api = (() => {
         body: JSON.stringify(dbRows)
       });
     } else {
-      const existing = readLocal(LOCAL_KEYS.LOGS, []).filter(r => String(r.GroupID) !== String(groupId));
-      let maxId = existing.reduce((m, r) => Math.max(m, Number(r.ID) || 0), 0);
+      const existing = readLocal(LOCAL_KEYS.LOGS, []).filter(r => String(r.GroupID || r.group_id) !== String(groupId));
+      let maxId = existing.reduce((m, r) => Math.max(m, Number(r.ID ?? r.id) || 0), 0);
       dbRows.forEach(r => {
         maxId++;
         existing.push(mapLogRowFromDb({ ...r, id: maxId }));
@@ -581,6 +617,7 @@ const Api = (() => {
       count: dbRows.length,
       totalMarkup,
       groupId,
+      taskId,
       imageCount: finalUrls.length
     };
   }
@@ -664,6 +701,475 @@ const Api = (() => {
       grandTotalMarkup += r.totalMarkup;
     });
     return { groupBy, grandTotalRaw, grandTotalMarkup, rows };
+  }
+
+  // ============================================================
+  // ใบสั่งงาน / งานโครงการ (TASKS / JOB ORDERS & TASK COSTING)
+  // ============================================================
+  function mapTaskRowFromDb(r) {
+    if (!r) return null;
+    let history = r.progress_history;
+    if (typeof history === 'string') {
+      try {
+        history = JSON.parse(history);
+      } catch (_) {
+        history = [];
+      }
+    }
+    if (!Array.isArray(history)) history = [];
+
+    return {
+      id: Number(r.id),
+      task_code: r.task_code || '',
+      title: r.title || '',
+      site: r.site || '',
+      location_detail: r.location_detail || '',
+      assigned_to: r.assigned_to || '',
+      ordered_by: r.ordered_by || '',
+      order_date: r.order_date || '',
+      due_date: r.due_date || null,
+      status: r.status || 'Pending',
+      progress_percent: Number(r.progress_percent) || 0,
+      description: r.description || '',
+      issues: r.issues || '',
+      resolution: r.resolution || '',
+      completion_summary: r.completion_summary || '',
+      progress_history: history,
+      accumulated_cost: Number(r.accumulated_cost) || 0,
+      accumulated_markup_cost: Number(r.accumulated_markup_cost) || 0,
+      accumulated_hours: Number(r.accumulated_hours) || 0,
+      accumulated_man_days: Number(r.accumulated_man_days) || 0,
+      accumulated_days: Number(r.accumulated_days) || 0,
+      created_at: r.created_at,
+      updated_at: r.updated_at
+    };
+  }
+
+  async function generateNextTaskCode(orderDate) {
+    const dateStr = (orderDate || new Date().toISOString().slice(0, 10)).trim();
+    const yyyymm = dateStr.replace(/[^0-9]/g, '').slice(0, 6) || new Date().toISOString().slice(0, 7).replace('-', '');
+    const prefix = `TSK-${yyyymm}-`;
+
+    let maxNum = 0;
+    if (isCloudConfigured()) {
+      try {
+        const rows = await sbFetch(`/rest/v1/tasks?select=task_code&task_code=like.${encodeURIComponent(prefix)}*`);
+        (rows || []).forEach(r => {
+          if (r.task_code && r.task_code.startsWith(prefix)) {
+            const numPart = parseInt(r.task_code.slice(prefix.length), 10);
+            if (!isNaN(numPart) && numPart > maxNum) maxNum = numPart;
+          }
+        });
+      } catch (_) {}
+    } else {
+      const tasks = readLocal(LOCAL_KEYS.TASKS, []);
+      tasks.forEach(t => {
+        if (t.task_code && t.task_code.startsWith(prefix)) {
+          const numPart = parseInt(t.task_code.slice(prefix.length), 10);
+          if (!isNaN(numPart) && numPart > maxNum) maxNum = numPart;
+        }
+      });
+    }
+
+    const nextNum = maxNum + 1;
+    return `${prefix}${String(nextNum).padStart(3, '0')}`;
+  }
+
+  async function createTask(taskData = {}) {
+    const now = new Date().toISOString();
+    const orderDate = taskData.order_date || now.slice(0, 10);
+    const taskCode = taskData.task_code || (await generateNextTaskCode(orderDate));
+
+    const taskPayload = {
+      task_code: taskCode,
+      title: taskData.title || '',
+      site: taskData.site || '',
+      location_detail: taskData.location_detail || '',
+      assigned_to: taskData.assigned_to || '',
+      ordered_by: taskData.ordered_by || '',
+      order_date: orderDate,
+      due_date: taskData.due_date || null,
+      status: taskData.status || 'Pending',
+      progress_percent: Number(taskData.progress_percent) || 0,
+      description: taskData.description || '',
+      issues: taskData.issues || '',
+      resolution: taskData.resolution || '',
+      completion_summary: taskData.completion_summary || '',
+      progress_history: Array.isArray(taskData.progress_history) ? taskData.progress_history : [],
+      accumulated_cost: Number(taskData.accumulated_cost) || 0,
+      accumulated_markup_cost: Number(taskData.accumulated_markup_cost) || 0,
+      accumulated_hours: Number(taskData.accumulated_hours) || 0,
+      accumulated_man_days: Number(taskData.accumulated_man_days) || 0,
+      accumulated_days: Number(taskData.accumulated_days) || 0,
+      created_at: now,
+      updated_at: now
+    };
+
+    if (isCloudConfigured()) {
+      const rows = await sbFetch('/rest/v1/tasks', {
+        method: 'POST',
+        headers: { 'Prefer': 'return=representation' },
+        body: JSON.stringify(taskPayload)
+      });
+      return mapTaskRowFromDb(rows?.[0]);
+    }
+
+    const tasks = readLocal(LOCAL_KEYS.TASKS, []);
+    const maxId = tasks.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0);
+    const newTask = {
+      ...taskPayload,
+      id: maxId + 1
+    };
+    tasks.push(newTask);
+    writeLocal(LOCAL_KEYS.TASKS, tasks);
+    return mapTaskRowFromDb(newTask);
+  }
+
+  async function getTasks(filter = {}) {
+    let taskList = [];
+    if (isCloudConfigured()) {
+      let query = '/rest/v1/tasks?select=*&order=created_at.desc,order_date.desc';
+      if (filter.site) query += `&site=eq.${encodeURIComponent(filter.site)}`;
+      if (filter.status) {
+        if (filter.status === '!Completed' || filter.status === 'Active' || filter.status === 'ExcludeCompleted') {
+          query += '&status=neq.Completed';
+        } else {
+          query += `&status=eq.${encodeURIComponent(filter.status)}`;
+        }
+      } else if (filter.excludeCompleted) {
+        query += '&status=neq.Completed';
+      }
+      const rows = await sbFetch(query);
+      taskList = (rows || []).map(mapTaskRowFromDb);
+    } else {
+      taskList = readLocal(LOCAL_KEYS.TASKS, []).map(mapTaskRowFromDb);
+      if (filter.site) {
+        taskList = taskList.filter(t => t.site === filter.site);
+      }
+      if (filter.status) {
+        if (filter.status === '!Completed' || filter.status === 'Active' || filter.status === 'ExcludeCompleted') {
+          taskList = taskList.filter(t => t.status !== 'Completed');
+        } else {
+          taskList = taskList.filter(t => t.status === filter.status);
+        }
+      } else if (filter.excludeCompleted) {
+        taskList = taskList.filter(t => t.status !== 'Completed');
+      }
+      taskList.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '') || (b.order_date || '').localeCompare(a.order_date || ''));
+    }
+
+    if (filter.search && typeof filter.search === 'string') {
+      const q = filter.search.toLowerCase().trim();
+      if (q) {
+        taskList = taskList.filter(t => {
+          return (t.task_code && t.task_code.toLowerCase().includes(q)) ||
+                 (t.title && t.title.toLowerCase().includes(q)) ||
+                 (t.site && t.site.toLowerCase().includes(q)) ||
+                 (t.assigned_to && t.assigned_to.toLowerCase().includes(q));
+        });
+      }
+    }
+
+    return taskList;
+  }
+
+  async function getTaskById(id) {
+    if (id == null) return null;
+    if (isCloudConfigured()) {
+      const rows = await sbFetch(`/rest/v1/tasks?select=*&id=eq.${encodeURIComponent(id)}`);
+      if (!rows || !rows.length) return null;
+      return mapTaskRowFromDb(rows[0]);
+    }
+    const tasks = readLocal(LOCAL_KEYS.TASKS, []);
+    const found = tasks.find(t => String(t.id) === String(id));
+    return found ? mapTaskRowFromDb(found) : null;
+  }
+
+  async function updateTask(id, taskData = {}) {
+    if (id == null) throw new Error('ต้องระบุ id ของใบสั่งงาน');
+    const now = new Date().toISOString();
+    const updatePayload = {
+      ...taskData,
+      updated_at: now
+    };
+    delete updatePayload.id;
+
+    if (isCloudConfigured()) {
+      const rows = await sbFetch(`/rest/v1/tasks?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Prefer': 'return=representation' },
+        body: JSON.stringify(updatePayload)
+      });
+      if (!rows || !rows.length) throw new Error('ไม่พบใบสั่งงาน ID: ' + id);
+      return mapTaskRowFromDb(rows[0]);
+    }
+
+    const tasks = readLocal(LOCAL_KEYS.TASKS, []);
+    const idx = tasks.findIndex(t => String(t.id) === String(id));
+    if (idx === -1) throw new Error('ไม่พบใบสั่งงาน ID: ' + id);
+    const updated = {
+      ...tasks[idx],
+      ...updatePayload,
+      id: tasks[idx].id
+    };
+    tasks[idx] = updated;
+    writeLocal(LOCAL_KEYS.TASKS, tasks);
+    return mapTaskRowFromDb(updated);
+  }
+
+  async function deleteTask(id) {
+    if (id == null) throw new Error('ต้องระบุ id ของใบสั่งงาน');
+    if (isCloudConfigured()) {
+      await sbFetch(`/rest/v1/daily_logs?task_id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ task_id: null })
+      }).catch(() => {});
+
+      await sbFetch(`/rest/v1/tasks?id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+      return { deleted: true };
+    }
+
+    const tasks = readLocal(LOCAL_KEYS.TASKS, []).filter(t => String(t.id) !== String(id));
+    writeLocal(LOCAL_KEYS.TASKS, tasks);
+
+    const logs = readLocal(LOCAL_KEYS.LOGS, []);
+    let modified = false;
+    logs.forEach(l => {
+      if (String(l.TaskId ?? l.task_id) === String(id)) {
+        l.TaskId = null;
+        l.task_id = null;
+        modified = true;
+      }
+    });
+    if (modified) writeLocal(LOCAL_KEYS.LOGS, logs);
+    return { deleted: true };
+  }
+
+  async function addTaskProgress(id, progressInfo = {}) {
+    const task = await getTaskById(id);
+    if (!task) throw new Error('ไม่พบใบสั่งงาน ID: ' + id);
+
+    const now = new Date().toISOString();
+    const percentNum = Number(progressInfo.percent);
+    const dateStr = progressInfo.date || now.slice(0, 10);
+    const issues = progressInfo.issues !== undefined ? String(progressInfo.issues) : '';
+    const resolution = progressInfo.resolution !== undefined ? String(progressInfo.resolution) : '';
+    const by = progressInfo.by !== undefined ? String(progressInfo.by) : '';
+
+    const newHistoryEntry = {
+      date: dateStr,
+      percent: percentNum,
+      issues,
+      resolution,
+      by,
+      created_at: now
+    };
+
+    const history = Array.isArray(task.progress_history) ? [...task.progress_history] : [];
+    history.push(newHistoryEntry);
+
+    let status = task.status;
+    if (status === 'Pending' && percentNum > 0) {
+      status = 'In Progress';
+    }
+
+    const updates = {
+      progress_history: history,
+      progress_percent: percentNum,
+      issues: progressInfo.issues !== undefined ? issues : task.issues,
+      resolution: progressInfo.resolution !== undefined ? resolution : task.resolution,
+      status
+    };
+
+    return updateTask(id, updates);
+  }
+
+  async function getTaskCostSummary(taskId) {
+    const task = await getTaskById(taskId);
+    if (!task) return null;
+
+    const logs = await fetchAllLogRows({ taskId });
+    const cfg = getConfig();
+
+    const uniqueDates = new Set(logs.map(l => l.work_date || l.Date).filter(Boolean));
+    const currentDaysWorked = uniqueDates.size;
+
+    let currentHours = 0;
+    let currentManDays = 0;
+    let currentRawWage = 0;
+    let currentMarkupWage = 0;
+
+    const workerMap = {};
+
+    logs.forEach(l => {
+      const h = Number(l.hours ?? l.Hours) || 0;
+      const ot = Number(l.ot_hours ?? l.OTHours) || 0;
+      const raw = Number(l.raw_wage ?? l.RawWage) || 0;
+      const markup = Number(l.total_with_markup ?? l.TotalWithMarkup) || 0;
+      const wageType = l.wage_type || l.WageType || 'hourly';
+      const wName = l.worker_name || l.WorkerName || 'ไม่ระบุ';
+      const wDate = l.work_date || l.Date || '';
+
+      const totalH = h + ot;
+      const md = wageType === 'fixed' ? 1.0 : (h / (cfg.hourlyDivisor || 8));
+
+      currentHours += totalH;
+      currentManDays += md;
+      currentRawWage += raw;
+      currentMarkupWage += markup;
+
+      if (!workerMap[wName]) {
+        workerMap[wName] = {
+          worker_name: wName,
+          workerName: wName,
+          hours: 0,
+          man_days: 0,
+          manDays: 0,
+          raw_wage: 0,
+          rawWage: 0,
+          markup_wage: 0,
+          markupWage: 0,
+          datesSet: new Set()
+        };
+      }
+      const entry = workerMap[wName];
+      entry.hours += totalH;
+      entry.man_days += md;
+      entry.raw_wage += raw;
+      entry.markup_wage += markup;
+      if (wDate) entry.datesSet.add(wDate);
+    });
+
+    const workerBreakdown = Object.values(workerMap).map(w => ({
+      worker_name: w.worker_name,
+      workerName: w.workerName,
+      hours: Math.round(w.hours * 100) / 100,
+      man_days: Math.round(w.man_days * 100) / 100,
+      manDays: Math.round(w.man_days * 100) / 100,
+      days: w.datesSet.size,
+      raw_wage: Math.round(w.raw_wage * 100) / 100,
+      rawWage: Math.round(w.raw_wage * 100) / 100,
+      markup_wage: Math.round(w.markup_wage * 100) / 100,
+      markupWage: Math.round(w.markup_wage * 100) / 100
+    }));
+    workerBreakdown.sort((a, b) => b.raw_wage - a.raw_wage);
+
+    currentHours = Math.round(currentHours * 100) / 100;
+    currentManDays = Math.round(currentManDays * 100) / 100;
+    currentRawWage = Math.round(currentRawWage * 100) / 100;
+    currentMarkupWage = Math.round(currentMarkupWage * 100) / 100;
+
+    const accumDays = Number(task.accumulated_days) || 0;
+    const accumHours = Number(task.accumulated_hours) || 0;
+    const accumManDays = Number(task.accumulated_man_days) || 0;
+    const accumCost = Number(task.accumulated_cost) || 0;
+    const accumMarkupCost = Number(task.accumulated_markup_cost) || 0;
+
+    const currentSummary = {
+      daysWorked: currentDaysWorked,
+      hours: currentHours,
+      manDays: currentManDays,
+      rawCost: currentRawWage,
+      markupCost: currentMarkupWage,
+      currentDaysWorked,
+      currentHours,
+      currentManDays,
+      currentRawWage,
+      currentMarkupWage
+    };
+
+    const accumulatedSummary = {
+      daysWorked: accumDays,
+      hours: accumHours,
+      manDays: accumManDays,
+      rawCost: accumCost,
+      markupCost: accumMarkupCost,
+      accumulated_days: accumDays,
+      accumulated_hours: accumHours,
+      accumulated_man_days: accumManDays,
+      accumulated_cost: accumCost,
+      accumulated_markup_cost: accumMarkupCost
+    };
+
+    const totalDaysWorked = currentDaysWorked + accumDays;
+    const totalHours = Math.round((currentHours + accumHours) * 100) / 100;
+    const totalManDays = Math.round((currentManDays + accumManDays) * 100) / 100;
+    const totalCost = Math.round((currentRawWage + accumCost) * 100) / 100;
+    const totalMarkupCost = Math.round((currentMarkupWage + accumMarkupCost) * 100) / 100;
+
+    const totalSummary = {
+      totalDaysWorked,
+      totalHours,
+      totalManDays,
+      totalCost,
+      totalMarkupCost,
+      daysWorked: totalDaysWorked,
+      hours: totalHours,
+      manDays: totalManDays,
+      rawCost: totalCost,
+      markupCost: totalMarkupCost
+    };
+
+    return {
+      task,
+      logs,
+      currentSummary,
+      accumulatedSummary,
+      totalSummary,
+      workerBreakdown
+    };
+  }
+
+  async function snapshotActiveTasksBeforeClear() {
+    const activeTasks = await getTasks({ excludeCompleted: true });
+    const allLogs = await fetchAllLogRows();
+    const cfg = getConfig();
+
+    let updatedCount = 0;
+    for (const task of activeTasks) {
+      const taskLogs = allLogs.filter(l => String(l.task_id ?? l.TaskId) === String(task.id));
+      if (!taskLogs.length) continue;
+
+      const uniqueDates = new Set(taskLogs.map(l => l.work_date || l.Date).filter(Boolean));
+      const daysWorked = uniqueDates.size;
+
+      let hours = 0;
+      let manDays = 0;
+      let rawCost = 0;
+      let markupCost = 0;
+
+      taskLogs.forEach(l => {
+        const h = Number(l.hours ?? l.Hours) || 0;
+        const ot = Number(l.ot_hours ?? l.OTHours) || 0;
+        const raw = Number(l.raw_wage ?? l.RawWage) || 0;
+        const markup = Number(l.total_with_markup ?? l.TotalWithMarkup) || 0;
+        const wageType = l.wage_type || l.WageType || 'hourly';
+
+        hours += (h + ot);
+        manDays += (wageType === 'fixed' ? 1.0 : (h / (cfg.hourlyDivisor || 8)));
+        rawCost += raw;
+        markupCost += markup;
+      });
+
+      const newDays = (Number(task.accumulated_days) || 0) + daysWorked;
+      const newHours = Math.round(((Number(task.accumulated_hours) || 0) + hours) * 100) / 100;
+      const newManDays = Math.round(((Number(task.accumulated_man_days) || 0) + manDays) * 100) / 100;
+      const newCost = Math.round(((Number(task.accumulated_cost) || 0) + rawCost) * 100) / 100;
+      const newMarkupCost = Math.round(((Number(task.accumulated_markup_cost) || 0) + markupCost) * 100) / 100;
+
+      await updateTask(task.id, {
+        accumulated_days: newDays,
+        accumulated_hours: newHours,
+        accumulated_man_days: newManDays,
+        accumulated_cost: newCost,
+        accumulated_markup_cost: newMarkupCost
+      });
+      updatedCount++;
+    }
+
+    return { updatedCount };
   }
 
   // ============================================================
@@ -873,6 +1379,24 @@ const Api = (() => {
     clearAllLogs,
     listBackups,
     getBackupData,
-    restoreBackupGroups
+    restoreBackupGroups,
+    // Tasks API
+    getTasks,
+    getTaskById,
+    createTask,
+    updateTask,
+    deleteTask,
+    addTaskProgress,
+    getTaskCostSummary,
+    snapshotActiveTasksBeforeClear
   };
 })();
+
+// ให้บริการผ่าน window.Api และ window.WAGE_API สำหรับเบราว์เซอร์ และ CommonJS สำหรับ Node.js
+if (typeof window !== 'undefined') {
+  window.Api = Api;
+  window.WAGE_API = Api;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = Api;
+}
