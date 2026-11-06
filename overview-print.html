@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>พิมพ์รายงานสรุปภาพรวมงาน</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Sarabun', 'Sarabun PSK', 'TH Sarabun New', Tahoma, sans-serif;
+    background: #f0f0f0;
+    color: #1a1a2e;
+    padding: 0;
+    margin: 0;
+  }
+
+  .print-wrapper {
+    max-width: 190mm;
+    margin: 0 auto;
+    background: white;
+    padding: 12mm 15mm;
+  }
+
+  .doc-header {
+    border-bottom: 2px solid #1a1a2e;
+    padding-bottom: 4mm;
+    margin-bottom: 6mm;
+  }
+  .doc-header h1 { font-size: 16pt; margin: 0 0 2mm; }
+  .doc-meta { font-size: 9.5pt; color: #555; }
+
+  .overall-summary {
+    font-size: 10pt;
+    line-height: 1.7;
+    background: #f5f6f7;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 3mm 4mm;
+    margin-bottom: 6mm;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .overall-summary strong { color: #1a1a2e; }
+
+  .site-block { margin-bottom: 8mm; }
+  .site-block h2 {
+    font-size: 13pt;
+    margin: 0 0 1mm;
+    padding-bottom: 1.5mm;
+    border-bottom: 1px solid #999;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .site-meta {
+    font-size: 9.5pt;
+    color: #555;
+    margin-bottom: 2mm;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  .req-block { page-break-inside: avoid; break-inside: avoid; margin-bottom: 4mm; }
+  .req-title {
+    font-size: 10.5pt;
+    font-weight: 600;
+    margin-bottom: 1.5mm;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  .doc-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; table-layout: fixed; }
+  .doc-table thead { display: table-header-group; }
+  .doc-table tr { page-break-inside: avoid; break-inside: avoid; }
+  .doc-table th, .doc-table td {
+    border: 1px solid #ccc;
+    padding: 1.5mm 2.5mm;
+    text-align: left;
+    overflow-wrap: break-word;
+  }
+  .doc-table th { background: #eef1f3; font-weight: 600; }
+  .doc-table td.text-center, .doc-table th.text-center { text-align: center; }
+  .doc-table td.nowrap, .doc-table th.nowrap { white-space: nowrap; }
+
+  @page { size: A4 portrait; margin: 10mm 15mm; }
+  @media print {
+    body { background: white; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .print-wrapper { padding: 0; max-width: 100%; box-shadow: none; }
+    .no-print { display: none !important; }
+  }
+
+  .btn-print {
+    display: inline-block;
+    padding: 8px 24px;
+    background: #1a1a2e;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    margin: 5px;
+  }
+  .btn-print:hover { background: #16213e; }
+  .btn-print:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<div class="no-print" style="text-align:center;padding:10px;background:#eef1f3;">
+  <button id="print-btn" class="btn-print" disabled onclick="window.print()">🖨️ พิมพ์เอกสาร</button>
+  <button class="btn-print" style="background:#6b7280;" onclick="window.close()">✕ ปิด</button>
+</div>
+<div class="print-wrapper">
+  <div class="doc-header">
+    <h1>รายงานสรุปภาพรวมงาน</h1>
+    <div class="doc-meta">ระบบคิดค่าแรงคนงาน · จัดทำเมื่อ <span id="generated-at"></span></div>
+  </div>
+  <div id="overall-summary"></div>
+  <div id="sites-container"></div>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/utils.js"></script>
+<script src="assets/js/overview-logic.js"></script>
+<script src="assets/js/pages/overview-print.js"></script>
+</body>
+</html>

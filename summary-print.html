@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>พิมพ์สรุปค่าแรง</title>
+<style>
+  /* ===== Reset & Base ===== */
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Sarabun', 'Sarabun PSK', 'TH Sarabun New', Tahoma, sans-serif;
+    background: #f0f0f0;
+    color: #1a1a2e;
+    padding: 0;
+    margin: 0;
+  }
+
+  .print-wrapper {
+    max-width: 190mm;
+    margin: 0 auto;
+    background: white;
+    padding: 10mm 15mm;
+  }
+
+  /* ===== Card Pair (2 cards per page) ===== */
+  .card-pair {
+    page-break-inside: avoid;
+    page-break-before: always;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between; /* Distribute cards vertically */
+    height: 277mm; /* A4 height (297mm) - body padding (10mm*2) */
+    gap: 4mm;
+    padding: 0;
+  }
+  .card-pair:first-child {
+    page-break-before: avoid;
+  }
+  /* If a pair only has one card, don't stretch it. Just align to top. */
+  .card-pair:has(> :nth-child(1):last-child) {
+    justify-content: flex-start;
+    height: auto; /* Let it take natural height */
+  }
+
+  .print-card {
+    border: 1.5px solid #333;
+    padding: 5mm 6mm 4mm;
+    border-radius: 3px;
+    flex: 1;
+  }
+
+  .print-card .card-header {
+    margin-bottom: 3mm;
+    padding-bottom: 2mm;
+    border-bottom: 1.5px solid #1a1a2e;
+  }
+  .print-card .card-header .row {
+    font-size: 10pt;
+    line-height: 1.6;
+  }
+  .print-card .card-header .row .label {
+    font-weight: 600;
+  }
+  .print-card .card-header .row .sep {
+    display: inline-block;
+    width: 12px;
+  }
+
+  .print-card .card-workers {
+    font-size: 9.5pt;
+    line-height: 1.5;
+    margin-bottom: 3mm;
+    flex: 1;
+  }
+  .print-card .card-workers .worker-item {
+    padding: 0.5px 0;
+  }
+
+  .print-card .card-footer {
+    border-top: 1.5px solid #1a1a2e;
+    padding-top: 2mm;
+    text-align: right;
+  }
+  .print-card .card-footer .sub-row {
+    font-size: 9.5pt;
+    font-weight: 400;
+    color: #1a1a2e;
+    line-height: 1.5;
+  }
+  .print-card .card-footer .total-row {
+    font-size: 11pt;
+    font-weight: 700;
+    color: #dc2626;
+    line-height: 1.6;
+    margin-top: 0.5mm;
+    padding-top: 0.5mm;
+    border-top: 1px dashed #999;
+  }
+
+  /* ===== Images ===== */
+  .image-section {
+    page-break-before: always;
+    margin-top: 0;
+  }
+  .image-page {
+    page-break-inside: avoid;
+    page-break-before: always;
+    margin-bottom: 3mm;
+  }
+  .image-page:first-child { page-break-before: avoid; }
+
+  .image-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4mm;
+  }
+  .image-grid .img-cell {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    text-align: center;
+    height: 42.5mm; /* Finetuned to fill more of the A4 page height */
+    display: flex;
+    flex-direction: column;
+  }
+  .image-grid .img-cell .img-wrapper {
+    flex: 1;
+    overflow: hidden;
+    border: 1px solid #ccc;
+    border-radius: 2px;
+  }
+  .image-grid .img-cell .img-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: fill; /* Changed from cover to stretch image */
+    display: block;
+  }
+  .image-grid .img-cell .img-date {
+    font-size: 8pt;
+    color: #555;
+    margin-top: 1mm;
+    flex-shrink: 0;
+  }
+
+  /* ===== Print ===== */
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+  @media print {
+    body {
+      background: white;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .print-wrapper {
+      padding: 10mm 15mm;
+      max-width: 100%;
+      box-shadow: none;
+    }
+    .no-print { display: none !important; }
+  }
+
+  /* ===== Buttons ===== */
+  .btn-print {
+    display: inline-block;
+    padding: 8px 24px;
+    background: #1a1a2e;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    margin: 5px;
+  }
+  .btn-print:hover { background: #16213e; }
+  .btn-print:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<div class="no-print" style="text-align:center;padding:10px;background:#eef1f3;">
+  <button id="print-btn" class="btn-print" disabled onclick="window.print()">🖨️ พิมพ์เอกสาร</button>
+  <button class="btn-print" style="background:#6b7280;" onclick="window.close()">✕ ปิด</button>
+</div>
+<div id="print-content" class="print-wrapper">
+  <div id="cards-container"></div>
+  <div id="images-container" class="image-section"></div>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/utils.js"></script>
+<script src="assets/js/pages/summary-print.js"></script>
+</body>
+</html>
