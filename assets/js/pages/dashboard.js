@@ -432,10 +432,16 @@
           return;
         }
         try {
+          const clearAction = (async () => {
+            if (typeof Api.snapshotActiveTasksBeforeClear === 'function') {
+              await Api.snapshotActiveTasksBeforeClear();
+            }
+            return await Api.clearAllLogs();
+          })();
           await Utils.animateProgress(
             clearBtn,
-            Api.clearAllLogs(),
-            'กำลังล้างบันทึก...',
+            clearAction,
+            'กำลังบันทึกยอดสะสมและล้างบันทึก...',
             '✅ ล้างสำเร็จ'
           );
           Utils.toast('ล้างบันทึกเรียบร้อย', 'success');
