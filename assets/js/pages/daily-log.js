@@ -16,6 +16,9 @@
   let siteHistory = [];
   let loadingAnimationInterval = null;
   let requesterHistory = [];
+  let availableTasks = [];
+  let lastAutoFilledDetail = '';
+  let lastAutoFilledRequester = '';
 
   // ─── Helper: safe number ─────────────────────────────
   function safeNum(v) {
@@ -28,6 +31,33 @@
     content.innerHTML = `
       <div class="grid lg:grid-cols-3 gap-6">
         <form id="log-form" class="ledger-card p-5 lg:col-span-2 space-y-4">
+          <div>
+            <label class="field-label" for="f-task">งานที่ได้รับมอบหมาย (ถ้ามี)</label>
+            <select id="f-task" class="field-input">
+              <option value="">-- งานทั่วไป / ไม่ระบุใบสั่งงาน --</option>
+            </select>
+          </div>
+
+          <div id="task-update-section" class="hidden p-4 rounded-lg space-y-3" style="display:none;background:var(--paper-warm);border:1px solid var(--line);">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-semibold uppercase tracking-wider" style="color:var(--blueprint)">บันทึกความคืบหน้าและปัญหาของใบสั่งงาน</span>
+              <span id="task-code-badge" class="font-mono text-xs px-2 py-0.5 rounded bg-[var(--paper)] border border-[var(--line)]"></span>
+            </div>
+            <div class="grid sm:grid-cols-3 gap-3">
+              <div>
+                <label class="field-label text-xs" for="f-task-progress">ความคืบหน้าของงานวันนี้ (%)</label>
+                <input type="number" id="f-task-progress" class="field-input text-sm" min="0" max="100" placeholder="0 - 100">
+              </div>
+              <div class="sm:col-span-2">
+                <label class="field-label text-xs" for="f-task-issues">ปัญหาที่พบหน้างานวันนี้ (ถ้ามี)</label>
+                <input type="text" id="f-task-issues" class="field-input text-sm" placeholder="เช่น วัสดุส่งช้า, ฝนตก">
+              </div>
+            </div>
+            <div>
+              <label class="field-label text-xs" for="f-task-resolution">แนวทางแก้ไข / สิ่งที่ทำได้</label>
+              <input type="text" id="f-task-resolution" class="field-input text-sm" placeholder="เช่น ประสานงานร้านค้า, เปลี่ยนจุดทำงาน">
+            </div>
+          </div>
           <div class="grid sm:grid-cols-2 gap-4">
             <div>
               <label class="field-label">วันที่</label>
@@ -134,6 +164,7 @@
     const yyyy = today.getFullYear();
     document.getElementById('f-date').value = `${dd}/${mm}/${yyyy}`;
 
+    document.getElementById('f-task').addEventListener('change', onTaskChange);
     document.getElementById('log-form').addEventListener('submit', onSubmit);
 
     // Image upload handlers
@@ -516,6 +547,107 @@
     document.getElementById('sum-total').textContent = '฿' + Utils.money(totalNormal + totalFixed);
   }
 
+  // ─── Task Integration ──────────────────────────────────────
+  function populateTaskDropdown(selectedId = null) {
+    const taskSelect = document.getElementById('f-task');
+    if (!taskSelect) return;
+    const currentVal = selectedId != null ? String(selectedId) : taskSelect.value;
+
+    let html = '<option value="">-- งานทั่วไป / ไม่ระบุใบสั่งงาน --</option>';
+    availableTasks.forEach(task => {
+      const code = task.task_code || `TSK-${task.id}`;
+      const title = task.title || '';
+      const site = task.site || 'ไม่ระบุไซต์';
+      const pct = task.progress_percent ?? 0;
+      const isCompleted = task.status === 'Completed' ? ' (เสร็จสิ้นแล้ว)' : '';
+      const label = `[${code}] ${title} (${site} - คืบหน้า ${pct}%)${isCompleted}`;
+      const isSelected = String(task.id) === String(currentVal) ? 'selected' : '';
+      html += `<option value="${task.id}" ${isSelected}>${Utils.escapeHtml(label)}</option>`;
+    });
+    taskSelect.innerHTML = html;
+    if (currentVal) {
+      taskSelect.value = currentVal;
+    }
+  }
+
+  async function loadTasks(selectedTaskId = null) {
+    try {
+      availableTasks = await Api.getTasks({ status: 'Active' });
+      if (selectedTaskId) {
+        const found = availableTasks.some(t => String(t.id) === String(selectedTaskId));
+        if (!found) {
+          const task = await Api.getTaskById(selectedTaskId);
+          if (task) {
+            availableTasks.push(task);
+          }
+        }
+      }
+      populateTaskDropdown(selectedTaskId);
+    } catch (err) {
+      console.warn('โหลดใบสั่งงานไม่สำเร็จ:', err);
+    }
+  }
+
+  function onTaskChange() {
+    const taskSelect = document.getElementById('f-task');
+    const updateSection = document.getElementById('task-update-section');
+    if (!taskSelect || !updateSection) return;
+
+    const val = taskSelect.value;
+    if (!val) {
+      updateSection.style.display = 'none';
+      updateSection.classList.add('hidden');
+      return;
+    }
+
+    const task = availableTasks.find(t => String(t.id) === String(val));
+    if (!task) return;
+
+    updateSection.style.display = 'block';
+    updateSection.classList.remove('hidden');
+
+    const badge = document.getElementById('task-code-badge');
+    if (badge) {
+      badge.textContent = task.task_code || `TSK-${task.id}`;
+    }
+
+    // Auto-fill site
+    const siteInput = document.getElementById('f-site');
+    if (siteInput && task.site) {
+      siteInput.value = task.site;
+    }
+
+    // Auto-fill detail
+    const detailInput = document.getElementById('f-detail');
+    if (detailInput) {
+      let fullDetail = task.title || '';
+      if (task.location_detail) {
+        fullDetail += ` (${task.location_detail})`;
+      } else if (task.description) {
+        fullDetail += ` - ${task.description}`;
+      }
+      if (!detailInput.value.trim() || detailInput.value === lastAutoFilledDetail) {
+        detailInput.value = fullDetail;
+        lastAutoFilledDetail = fullDetail;
+      }
+    }
+
+    // Auto-fill requester
+    const reqInput = document.getElementById('f-requester');
+    if (reqInput && task.ordered_by) {
+      if (!reqInput.value.trim() || reqInput.value === lastAutoFilledRequester) {
+        reqInput.value = task.ordered_by;
+        lastAutoFilledRequester = task.ordered_by;
+      }
+    }
+
+    // Set progress
+    const progressInput = document.getElementById('f-task-progress');
+    if (progressInput) {
+      progressInput.value = task.progress_percent != null ? task.progress_percent : 0;
+    }
+  }
+
   // ─── Load Data ─────────────────────────────────────────────
   async function loadWorkers() {
     try {
@@ -564,6 +696,40 @@
       document.getElementById('f-site').value = data.site || '';
       document.getElementById('f-detail').value = data.jobDetail || '';
       document.getElementById('f-requester').value = data.requestedBy || '';
+
+      // Restore linked task if available
+      const editTaskId = data.taskId != null ? data.taskId : (data.task_id != null ? data.task_id : null);
+      if (editTaskId != null) {
+        let task = availableTasks.find(t => String(t.id) === String(editTaskId));
+        if (!task) {
+          try {
+            task = await Api.getTaskById(editTaskId);
+            if (task) {
+              availableTasks.push(task);
+              populateTaskDropdown(editTaskId);
+            }
+          } catch (err) {
+            console.warn('โหลดใบสั่งงานที่เชื่อมโยงไม่สำเร็จ:', err);
+          }
+        }
+        const taskSelect = document.getElementById('f-task');
+        if (taskSelect) {
+          taskSelect.value = String(editTaskId);
+        }
+        const updateSection = document.getElementById('task-update-section');
+        if (updateSection) {
+          updateSection.style.display = 'block';
+          updateSection.classList.remove('hidden');
+        }
+        const badge = document.getElementById('task-code-badge');
+        if (badge && task) {
+          badge.textContent = task.task_code || `TSK-${task.id}`;
+        }
+        const progressInput = document.getElementById('f-task-progress');
+        if (progressInput && task) {
+          progressInput.value = task.progress_percent != null ? task.progress_percent : 0;
+        }
+      }
 
       // Load images
       if (data.imageUrls && Array.isArray(data.imageUrls)) {
@@ -685,7 +851,11 @@
     const dateMatch = dateInput.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     const apiDate = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : dateInput;
 
+    const taskSelect = document.getElementById('f-task');
+    const selectedTaskId = (taskSelect && taskSelect.value) ? Number(taskSelect.value) : null;
+
     const payload = {
+      taskId: selectedTaskId,
       date: apiDate,
       site: document.getElementById('f-site').value.trim(),
       jobDetail: document.getElementById('f-detail').value.trim(),
@@ -702,10 +872,25 @@
     const submitBtn = document.getElementById('f-submit');
 
     try {
-      const action = editGroupId ? Api.updateLogGroup(payload) : Api.addLogs(payload);
+      const saveAction = async () => {
+        const res = editGroupId ? await Api.updateLogGroup(payload) : await Api.addLogs(payload);
+        if (selectedTaskId) {
+          const progressVal = safeNum(document.getElementById('f-task-progress')?.value);
+          const issuesVal = (document.getElementById('f-task-issues')?.value || '').trim();
+          const resolutionVal = (document.getElementById('f-task-resolution')?.value || '').trim();
+          await Api.addTaskProgress(selectedTaskId, {
+            percent: progressVal,
+            issues: issuesVal,
+            resolution: resolutionVal,
+            by: payload.requestedBy || 'หน้างาน (Daily Log)',
+            date: apiDate
+          });
+        }
+        return res;
+      };
       const successMessage = editGroupId ? 'แก้ไขสำเร็จ!' : 'บันทึกสำเร็จ!';
 
-      await Utils.animateProgress(submitBtn, action, 'กำลังบันทึก...', successMessage);
+      await Utils.animateProgress(submitBtn, saveAction(), 'กำลังบันทึก...', successMessage);
 
       if (editGroupId) {
         Utils.toast('แก้ไขใบงานสำเร็จ', 'success');
@@ -732,6 +917,7 @@
     // 2. Check for edit mode
     const urlParams = new URLSearchParams(window.location.search);
     const editParam = urlParams.get('edit');
+    const taskIdParam = urlParams.get('taskId') || urlParams.get('task_id');
 
     if (editParam) {
       // In edit mode, show the full-page loader immediately
@@ -742,7 +928,15 @@
 
     // 3. Load initial data (workers and history)
     // This will run in parallel
-    await Promise.all([loadWorkers(), loadHistory()]);
+    await Promise.all([loadWorkers(), loadHistory(), loadTasks(taskIdParam)]);
+
+    if (taskIdParam && !editParam) {
+      const taskSelect = document.getElementById('f-task');
+      if (taskSelect) {
+        taskSelect.value = String(taskIdParam);
+        onTaskChange();
+      }
+    }
 
     // 4. If in edit mode, now load the group data
     if (editParam) {
