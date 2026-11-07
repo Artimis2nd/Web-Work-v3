@@ -18,6 +18,10 @@
   let editingTaskId = null;
   let activeTimelineTaskId = null;
   let activeCompletionTaskId = null;
+  let draftSubItems = [];
+  let draftAttachments = []; // [{ id, name, type, media_kind, size, isNew, rawData }]
+  let removedMediaIds = [];
+  let activeObjectUrl = null;
 
   // 2. Base Page Structure (KPI Cards, Action Bar, Task Container, Modals)
   content.innerHTML = `
@@ -102,23 +106,39 @@
 
     <!-- Modal 1: Create / Edit Task Modal -->
     <div id="modal-task-form" class="modal-backdrop hidden">
-      <div class="modal-box max-w-xl">
-        <div class="modal-header">
+      <div class="modal-box max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="modal-header sticky top-0 bg-white z-10 border-b border-slate-200">
           <h3 class="font-display text-lg font-semibold text-slate-800" id="task-modal-title">➕ สั่งงานใหม่ (Job Order)</h3>
           <button type="button" id="btn-close-task-modal" class="btn btn-outline btn-sm">✕</button>
         </div>
         <form id="task-form" class="modal-body space-y-4">
           <input type="hidden" id="task-input-id" value="">
+          <!-- ซ่อนฟิลด์ที่ไม่ได้ใช้งานบนหน้าจอ เพื่อความคล่องตัวและคงความเข้ากันได้ของระบบ -->
+          <input type="hidden" id="task-input-assigned" name="assigned_to" value="">
+          <input type="hidden" id="task-input-due-date" name="due_date" value="">
+          <input type="hidden" id="task-input-status" name="status" value="Pending">
+          <input type="hidden" id="task-input-percent" name="progress_percent" value="0">
+          <datalist id="workers-datalist"></datalist>
+          <datalist id="common-units-datalist">
+            <option value="ตร.ม.">
+            <option value="เมตร">
+            <option value="จุด">
+            <option value="ชุด">
+            <option value="คิว">
+            <option value="ต้น">
+            <option value="ห้อง">
+            <option value="งาน">
+          </datalist>
 
           <div>
-            <label class="field-label" for="task-input-title">ชื่องาน / รายละเอียดคำสั่ง <span class="text-red-500">*</span></label>
-            <input type="text" id="task-input-title" name="title" class="field-input w-full" required placeholder="เช่น งานเทเสาชั้น 2, ก่ออิฐห้องน้ำ">
+            <label class="field-label" for="task-input-title">ชื่องาน / รายละเอียดคำสั่งหลัก <span class="text-red-500">*</span></label>
+            <input type="text" id="task-input-title" name="title" class="field-input w-full" required placeholder="เช่น งานเดินท่อสายไฟ+วางบ่อพัก, งานเทเสาชั้น 2">
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="field-label" for="task-input-site">ไซต์งาน (Site) <span class="text-red-500">*</span></label>
-              <input type="text" id="task-input-site" name="site" class="field-input w-full" required placeholder="เช่น ไซต์สุขุมวิท 101" list="sites-datalist">
+              <input type="text" id="task-input-site" name="site" class="field-input w-full" required placeholder="เช่น หมู่บ้านริเวอร์ไซด์" list="sites-datalist">
               <datalist id="sites-datalist"></datalist>
             </div>
             <div>
@@ -129,46 +149,59 @@
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label class="field-label" for="task-input-assigned">ผู้รับผิดชอบ / หัวหน้างาน</label>
-              <input type="text" id="task-input-assigned" name="assigned_to" class="field-input w-full" placeholder="เลือกหรือพิมพ์ชื่อคนงาน" list="workers-datalist">
-              <datalist id="workers-datalist"></datalist>
-            </div>
-            <div>
               <label class="field-label" for="task-input-ordered-by">ผู้สั่งงาน</label>
-              <input type="text" id="task-input-ordered-by" name="ordered_by" class="field-input w-full" placeholder="เช่น วิศวกรธีรเดช">
+              <input type="text" id="task-input-ordered-by" name="ordered_by" class="field-input w-full" placeholder="เช่น เฮีย" value="เฮีย">
             </div>
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="field-label" for="task-input-order-date">วันที่สั่งงาน</label>
               <input type="date" id="task-input-order-date" name="order_date" class="field-input w-full">
             </div>
-            <div>
-              <label class="field-label" for="task-input-due-date">กำหนดเสร็จ (Due Date)</label>
-              <input type="date" id="task-input-due-date" name="due_date" class="field-input w-full">
+          </div>
+
+          <!-- ส่วนที่ 1: รายการงานย่อย (Sub-items) -->
+          <div class="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2.5">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <label class="field-label mb-0 text-slate-800">📋 รายการงานย่อยในใบสั่งงานนี้</label>
+                <div class="text-xs text-slate-500">ระบุรายการที่สั่งทำ (หากยังไม่รู้ปริมาณแน่นอน ให้เว้นช่อง "เป้าหมาย" ว่างไว้ เพื่อนับยอดทำจริงหน้างาน)</div>
+              </div>
+              <button type="button" id="btn-add-subitem" class="btn btn-outline btn-sm text-xs">
+                ➕ เพิ่มรายการย่อย
+              </button>
+            </div>
+
+            <div id="subitems-list-container" class="space-y-2">
+              <!-- แถวรายการงานย่อยจะถูกสร้างด้วย JS -->
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="edit-status-row">
-            <div>
-              <label class="field-label" for="task-input-status">สถานะงาน</label>
-              <select id="task-input-status" name="status" class="field-input w-full">
-                <option value="Pending">รอดำเนินการ (Pending)</option>
-                <option value="In Progress">กำลังดำเนินการ (In Progress)</option>
-                <option value="Blocked">ติดปัญหา (Blocked)</option>
-                <option value="Completed">เสร็จสมบูรณ์ (Completed)</option>
-              </select>
+          <!-- ส่วนที่ 2: เอกสารแนบ รูปถ่ายกระดาษสั่งงาน / วิดีโอสั้น -->
+          <div class="p-3.5 rounded-lg bg-amber-50/40 border border-amber-200/80 space-y-2.5">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <label class="field-label mb-0 text-slate-800">📎 เอกสารแนบ / รูปถ่ายแบบกระดาษ / วิดีโอสั่งงาน</label>
+                <div class="text-xs text-slate-500">ถ่ายรูปกระดาษที่เขียนสั่งงาน หรือแนบคลิปวิดีโอสั้นอธิบายหน้างาน (สูงสุด 50 MB/ไฟล์)</div>
+              </div>
+              <div class="flex gap-1.5 flex-wrap">
+                <button type="button" id="btn-attach-photo" class="btn btn-outline btn-sm text-xs">
+                  📷 แนบรูป / ถ่ายรูป
+                </button>
+                <button type="button" id="btn-attach-video" class="btn btn-outline btn-sm text-xs">
+                  🎥 แนบวิดีโอสั้น
+                </button>
+                <input type="file" id="input-attach-photo" accept="image/*" multiple class="hidden" style="display:none">
+                <input type="file" id="input-attach-video" accept="video/*" multiple class="hidden" style="display:none">
+              </div>
             </div>
-            <div>
-              <label class="field-label" for="task-input-percent">ความคืบหน้า (%)</label>
-              <input type="number" id="task-input-percent" name="progress_percent" class="field-input w-full" min="0" max="100" value="0">
+
+            <div id="task-attachments-preview" class="space-y-1.5">
+              <!-- รายการไฟล์แนบจะถูกสร้างด้วย JS -->
             </div>
           </div>
 
           <div>
-            <label class="field-label" for="task-input-desc">รายละเอียดเพิ่มเติม / ขอบเขตงาน</label>
-            <textarea id="task-input-desc" name="description" rows="3" class="field-input w-full" placeholder="ระบุรายละเอียด ข้อกำหนด เครื่องมือที่ต้องใช้ หรือข้อควรระวัง..."></textarea>
+            <label class="field-label" for="task-input-desc">รายละเอียดเพิ่มเติม / ผลงานที่ต้องการ / ข้อควรระวัง</label>
+            <textarea id="task-input-desc" name="description" rows="3" class="field-input w-full" placeholder="ระบุสเปกผลงานที่ต้องการ ข้อกำหนด เครื่องมือที่ต้องใช้ หรือข้อควรระวัง..."></textarea>
           </div>
 
           <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
@@ -273,6 +306,19 @@
         </form>
       </div>
     </div>
+
+    <!-- Modal 4: Media Viewer Modal (เปิดดูรูปภาพแบบกระดาษ & เล่นวิดีโอสั่งงาน) -->
+    <div id="modal-media-viewer" class="modal-backdrop hidden">
+      <div class="modal-box max-w-3xl">
+        <div class="modal-header">
+          <h3 class="font-display text-base font-semibold text-slate-800 truncate" id="media-viewer-title">📎 เปิดดูเอกสารแนบ</h3>
+          <button type="button" id="btn-close-media-viewer" class="btn btn-outline btn-sm">✕ ปิด</button>
+        </div>
+        <div class="modal-body flex flex-col items-center justify-center bg-slate-900/95 rounded-b-lg p-4 min-h-[280px]" id="media-viewer-body">
+          <!-- รูปภาพหรือวิดีโอจะถูกแสดงที่นี่ -->
+        </div>
+      </div>
+    </div>
   `;
 
   // 3. Helper functions & Rendering
@@ -294,6 +340,14 @@
     const date = new Date(d);
     if (isNaN(date.getTime())) return String(d);
     return date.toLocaleDateString('th-TH', { year: '2-digit', month: '2-digit', day: 'numeric' });
+  }
+
+  function formatSize(bytes) {
+    if (typeof UTILS.formatFileSize === 'function') return UTILS.formatFileSize(bytes);
+    const b = Number(bytes) || 0;
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+    return `${(b / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   function getTodayString() {
@@ -360,19 +414,16 @@
     const siteVal = siteSelect?.value || '';
 
     return allTasks.filter(task => {
-      // Status filter
       if (statusVal === 'Active') {
         if (task.status === 'Completed') return false;
       } else if (statusVal) {
         if (task.status !== statusVal) return false;
       }
 
-      // Site filter
       if (siteVal && task.site !== siteVal) {
         return false;
       }
 
-      // Search query
       if (query) {
         const matchCode = (task.task_code || '').toLowerCase().includes(query);
         const matchTitle = (task.title || '').toLowerCase().includes(query);
@@ -380,13 +431,24 @@
         const matchLoc = (task.location_detail || '').toLowerCase().includes(query);
         const matchAssigned = (task.assigned_to || '').toLowerCase().includes(query);
         const matchOrdered = (task.ordered_by || '').toLowerCase().includes(query);
-        if (!matchCode && !matchTitle && !matchSite && !matchLoc && !matchAssigned && !matchOrdered) {
+        const matchSubItem = Array.isArray(task.sub_items) && task.sub_items.some(it => (it.name || '').toLowerCase().includes(query));
+        if (!matchCode && !matchTitle && !matchSite && !matchLoc && !matchAssigned && !matchOrdered && !matchSubItem) {
           return false;
         }
       }
 
       return true;
     });
+  }
+
+  function renderSubItemStatusIcon(status) {
+    switch (status) {
+      case 'Completed': return '✅';
+      case 'Blocked': return '⚠️';
+      case 'Cancelled': return '🚫';
+      case 'In Progress': return '🔨';
+      default: return '⏳';
+    }
   }
 
   // 8. Render Task Cards
@@ -416,15 +478,92 @@
         ? UTILS.renderProgressBar(task.progress_percent, { status: task.status })
         : `<div class="text-sm font-semibold">${task.progress_percent || 0}%</div>`;
 
-      const hasIssues = Boolean(task.issues && task.issues.trim());
+      const subItems = Array.isArray(task.sub_items) ? task.sub_items : [];
+      const attachments = Array.isArray(task.attachments) ? task.attachments : [];
+      const hasBlockedSubItem = subItems.some(it => it.status === 'Blocked' || (it.issue_note && it.issue_note.trim()));
+      const hasIssues = Boolean((task.issues && task.issues.trim()) || hasBlockedSubItem);
       const hasResolution = Boolean(task.resolution && task.resolution.trim());
       const hasCompletionSummary = Boolean(task.completion_summary && task.completion_summary.trim());
       const isCompleted = task.status === 'Completed';
+      const isBlocked = task.status === 'Blocked' || hasBlockedSubItem;
+
+      const daysWorked = Number(task.total_days_worked) || Number(task.accumulated_days) || 0;
+      const workedDates = Array.isArray(task.worked_dates) ? task.worked_dates : [];
+      const lastWorkedDate = workedDates.length > 0 ? formatDate(workedDates[workedDates.length - 1]) : null;
+
+      // สรุปรายการงานย่อยบนการ์ด
+      const subItemsHtml = subItems.length > 0 ? `
+        <div class="mb-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200/90 space-y-1.5">
+          <div class="flex items-center justify-between text-xs font-semibold text-slate-700 pb-1 border-b border-slate-200">
+            <span>รายการงานย่อย (${subItems.filter(i => i.status === 'Completed').length}/${subItems.filter(i => i.status !== 'Cancelled').length} เสร็จ)</span>
+            <span class="text-slate-400 font-normal">ปริมาณสะสม</span>
+          </div>
+          <div class="space-y-1 max-h-36 overflow-y-auto pr-0.5">
+            ${subItems.map(it => {
+              const icon = renderSubItemStatusIcon(it.status);
+              const isCancelled = it.status === 'Cancelled';
+              const isItemBlocked = it.status === 'Blocked';
+              const unitStr = it.unit ? ` ${escapeHtml(it.unit)}` : '';
+              let qtyLabel = '';
+              if (isCancelled) {
+                qtyLabel = '<span class="text-slate-400">ยกเลิก</span>';
+              } else if (it.target_qty && it.target_qty > 0) {
+                qtyLabel = `<span class="font-mono font-semibold text-slate-700">${it.actual_qty || 0}/${it.target_qty}${unitStr}</span> <span class="text-slate-400">(${it.progress_percent || 0}%)</span>`;
+              } else {
+                qtyLabel = `<span class="font-mono font-semibold text-blue-700">ทำจริง ${it.actual_qty || 0}${unitStr}</span> <span class="text-slate-400">(${it.progress_percent || 0}%)</span>`;
+              }
+              return `
+                <div class="text-xs flex flex-col gap-0.5 py-0.5 ${isCancelled ? 'opacity-50 line-through' : ''}">
+                  <div class="flex items-start justify-between gap-2">
+                    <span class="${isItemBlocked ? 'text-red-700 font-semibold' : 'text-slate-700'}">${icon} ${escapeHtml(it.name)}</span>
+                    <span class="shrink-0">${qtyLabel}</span>
+                  </div>
+                  ${it.issue_note ? `<div class="text-[11px] text-red-600 pl-4">↳ ปัญหา: ${escapeHtml(it.issue_note)}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : '';
+
+      // เอกสารแนบ รูปภาพ / วิดีโอสั้น
+      const attachmentsHtml = attachments.length > 0 ? `
+        <div class="mb-3">
+          <div class="text-[11px] font-semibold text-slate-500 mb-1">📎 เอกสารแนบตอนสั่งงาน (${attachments.length} ไฟล์):</div>
+          <div class="flex flex-wrap gap-1.5">
+            ${attachments.map(att => {
+              const isVideo = att.media_kind === 'video' || (att.type && att.type.startsWith('video/'));
+              return `
+                <button
+                  type="button"
+                  data-action="view-media"
+                  data-media-id="${escapeHtml(att.id)}"
+                  data-media-name="${escapeHtml(att.name || 'ไฟล์แนบ')}"
+                  data-media-kind="${isVideo ? 'video' : 'image'}"
+                  class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition-colors"
+                  title="คลิกเพื่อเปิดดู ${escapeHtml(att.name || '')}"
+                >
+                  <span>${isVideo ? '🎥' : '📷'}</span>
+                  <span class="truncate max-w-[130px]">${escapeHtml(att.name || (isVideo ? 'วิดีโอสั่งงาน' : 'รูปใบสั่งงาน'))}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : '';
 
       return `
-        <div class="ledger-card p-4 flex flex-col justify-between hover:shadow-md transition-shadow relative">
-          <!-- Top Row: Code & Status Badge -->
+        <div class="ledger-card p-4 flex flex-col justify-between hover:shadow-md transition-shadow relative ${isBlocked ? 'ring-2 ring-red-400/80' : ''}">
           <div>
+            <!-- จุดแจ้งเตือนเด่นชัดเมื่อมีปัญหา -->
+            ${isBlocked ? `
+              <div class="mb-2.5 px-2.5 py-1.5 rounded bg-red-600 text-white text-xs font-semibold flex items-center justify-between shadow-sm">
+                <span>🚨 มีรายการติดปัญหาหน้างาน!</span>
+                <span class="text-[11px] font-normal opacity-90">ต้องตรวจสอบ</span>
+              </div>
+            ` : ''}
+
+            <!-- Top Row: Code & Status Badge -->
             <div class="flex items-center justify-between gap-2 mb-2">
               <span class="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold border border-slate-200">
                 ${escapeHtml(task.task_code || `TSK-${task.id}`)}
@@ -446,32 +585,44 @@
             <!-- Progress Bar -->
             <div class="mb-3">
               <div class="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
-                <span>ความคืบหน้า</span>
+                <span>ความคืบหน้ารวม</span>
                 <span>${task.progress_percent || 0}%</span>
               </div>
               ${progressHtml}
             </div>
 
-            <!-- Assignment & Dates Info -->
+            <!-- Sub-items Summary -->
+            ${subItemsHtml}
+
+            <!-- Attachments Chips -->
+            ${attachmentsHtml}
+
+            <!-- Days Worked & Order Dates Info -->
             <div class="text-xs text-slate-600 space-y-1 mb-3 pt-2 border-t border-slate-100">
               <div class="flex items-center justify-between">
-                <span class="text-slate-400">👤 ผู้รับผิดชอบ:</span>
-                <span class="font-medium text-slate-700">${escapeHtml(task.assigned_to || '-')}</span>
+                <span class="text-slate-500 font-medium">👷 เข้าทำหน้างานแล้ว:</span>
+                <span class="font-mono font-bold ${daysWorked > 0 ? 'text-blue-700' : 'text-slate-500'}">
+                  ${daysWorked} วัน ${lastWorkedDate ? `<span class="font-sans font-normal text-slate-400">(ล่าสุด ${lastWorkedDate})</span>` : ''}
+                </span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-slate-400">📅 วันที่สั่ง:</span>
-                <span>${formatDate(task.order_date)}</span>
+                <span class="text-slate-400">📅 วันที่สั่งงาน:</span>
+                <span>${formatDate(task.order_date)} ${task.ordered_by ? `<span class="text-slate-400">(${escapeHtml(task.ordered_by)})</span>` : ''}</span>
               </div>
-              <div class="flex items-center justify-between">
-                <span class="text-slate-400">⏱️ กำหนดเสร็จ:</span>
-                <span class="${task.due_date && new Date(task.due_date) < new Date() && !isCompleted ? 'text-red-600 font-medium' : ''}">${formatDate(task.due_date)}</span>
-              </div>
+              ${task.assigned_to ? `<span class="hidden">${escapeHtml(task.assigned_to)}</span>` : ''}
             </div>
+
+            <!-- Description Excerpt -->
+            ${task.description ? `
+              <div class="mb-3 text-xs text-slate-600 bg-slate-50 p-2 rounded border border-slate-100">
+                <span class="font-semibold text-slate-700">📝 สเปก/หมายเหตุ:</span> ${escapeHtml(task.description)}
+              </div>
+            ` : ''}
 
             <!-- Issues / Resolution Excerpt -->
             ${hasIssues || hasResolution ? `
-              <div class="mb-3 p-2.5 rounded bg-amber-50/70 border border-amber-200/80 text-xs space-y-1">
-                ${hasIssues ? `<div class="text-red-700 font-medium">⚠️ ปัญหา: ${escapeHtml(task.issues)}</div>` : ''}
+              <div class="mb-3 p-2.5 rounded bg-red-50/80 border border-red-200 text-xs space-y-1">
+                ${task.issues ? `<div class="text-red-700 font-medium">⚠️ ปัญหา: ${escapeHtml(task.issues)}</div>` : ''}
                 ${hasResolution ? `<div class="text-emerald-800">💡 แนวทาง: ${escapeHtml(task.resolution)}</div>` : ''}
               </div>
             ` : ''}
@@ -487,6 +638,16 @@
 
           <!-- Bottom Actions -->
           <div class="pt-3 border-t border-slate-100 flex flex-wrap gap-1.5 justify-end">
+            ${!isCompleted ? `
+              <a
+                href="daily-log.html?task_id=${task.id}"
+                class="btn btn-amber btn-sm text-xs inline-flex items-center gap-1"
+                title="ดึงใบสั่งงานนี้ไปลงบันทึกงานประจำวัน"
+              >
+                📝 ลงรายวัน
+              </a>
+            ` : ''}
+
             <!-- Timeline & Issues Button -->
             <button
               type="button"
@@ -503,9 +664,9 @@
             <a
               href="task-cost-report.html?task_id=${task.id}"
               class="btn btn-outline btn-sm text-xs inline-flex items-center gap-1"
-              title="ดูรายงานสรุปต้นทุนค่าแรงของงานนี้"
+              title="ดูรายงานสรุปต้นทุนค่าแรงและปริมาณงานของใบงานนี้"
             >
-              📊 ต้นทุนค่าแรง
+              📊 ต้นทุน/ปริมาณ
             </a>
 
             <!-- Edit Button -->
@@ -515,7 +676,7 @@
               data-action="edit-task"
               data-id="${task.id}"
               class="btn btn-outline btn-sm text-xs"
-              title="แก้ไขข้อมูลใบสั่งงาน"
+              title="แก้ไขข้อมูลใบสั่งงาน / เพิ่มลดรายการและรูปแนบ"
             >
               ✏️ แก้ไข
             </button>
@@ -556,7 +717,6 @@
 
   // 9. Attach Event Listeners to Card Buttons
   function attachCardActionHandlers() {
-    // Edit buttons
     document.querySelectorAll('[data-action="edit-task"]').forEach(btn => {
       btn.onclick = () => {
         const id = Number(btn.getAttribute('data-id'));
@@ -564,7 +724,6 @@
       };
     });
 
-    // Timeline buttons
     document.querySelectorAll('[data-action="timeline-task"]').forEach(btn => {
       btn.onclick = () => {
         const id = Number(btn.getAttribute('data-id'));
@@ -572,7 +731,6 @@
       };
     });
 
-    // Complete buttons
     document.querySelectorAll('[data-action="complete-task"]').forEach(btn => {
       btn.onclick = () => {
         const id = Number(btn.getAttribute('data-id'));
@@ -580,18 +738,301 @@
       };
     });
 
-    // Delete buttons
     document.querySelectorAll('[data-action="delete-task"]').forEach(btn => {
       btn.onclick = () => {
         const id = Number(btn.getAttribute('data-id'));
         handleDeleteTask(id);
       };
     });
+
+    document.querySelectorAll('[data-action="view-media"]').forEach(btn => {
+      btn.onclick = () => {
+        const mediaId = btn.getAttribute('data-media-id');
+        const mediaName = btn.getAttribute('data-media-name');
+        const mediaKind = btn.getAttribute('data-media-kind');
+        openMediaViewerModal(mediaId, mediaName, mediaKind);
+      };
+    });
+  }
+
+  // 9.5 Sub-items & Attachments Form Helpers
+  function syncDraftSubItemsFromDom() {
+    const container = document.getElementById('subitems-list-container');
+    if (!container) return;
+    const rows = container.querySelectorAll('.subitem-row');
+    if (!rows.length) return;
+
+    const updated = [];
+    rows.forEach((row, idx) => {
+      const id = row.getAttribute('data-subitem-id') || `sub_${idx + 1}`;
+      const nameInput = row.querySelector('.subitem-name-input');
+      const targetInput = row.querySelector('.subitem-target-input');
+      const unitInput = row.querySelector('.subitem-unit-input');
+      const statusSelect = row.querySelector('.subitem-status-select');
+
+      const existing = draftSubItems.find(it => String(it.id) === String(id)) || {};
+      const nameVal = (nameInput?.value || '').trim();
+      const targetRaw = (targetInput?.value || '').trim();
+      const targetQty = targetRaw !== '' && Number(targetRaw) > 0 ? Number(targetRaw) : null;
+      const unitVal = (unitInput?.value || '').trim();
+      const statusVal = statusSelect ? statusSelect.value : (existing.status || 'Pending');
+
+      updated.push({
+        ...existing,
+        id,
+        name: nameVal,
+        target_qty: targetQty,
+        unit: unitVal,
+        actual_qty: Number(existing.actual_qty) || 0,
+        progress_percent: Number(existing.progress_percent) || 0,
+        status: statusVal,
+        issue_note: existing.issue_note || ''
+      });
+    });
+    draftSubItems = updated;
+  }
+
+  function renderDraftSubItems() {
+    const container = document.getElementById('subitems-list-container');
+    if (!container) return;
+
+    if (!draftSubItems.length) {
+      container.innerHTML = `
+        <div class="text-xs text-slate-400 text-center py-2 bg-white rounded border border-dashed border-slate-300">
+          ยังไม่มีรายการย่อย — กดปุ่ม "➕ เพิ่มรายการย่อย" เพื่อแยกย่อยงาน (เช่น 1. เดินท่อไฟ, 2. วางบ่อพัก)
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = draftSubItems.map((it, idx) => {
+      const targetVal = it.target_qty !== null && it.target_qty !== undefined && it.target_qty > 0 ? String(it.target_qty) : '';
+      const hasActual = (Number(it.actual_qty) || 0) > 0;
+      return `
+        <div class="subitem-row p-2 bg-white rounded border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-2" data-subitem-id="${escapeHtml(it.id || `sub_${idx + 1}`)}">
+          <div class="flex items-center gap-1.5 flex-1">
+            <span class="font-mono text-xs font-bold text-slate-400 w-5 text-center">${idx + 1}.</span>
+            <input
+              type="text"
+              class="field-input text-xs flex-1 subitem-name-input"
+              placeholder="ชื่อรายการ (เช่น เดินท่อสายไฟ, ก่ออิฐ)"
+              value="${escapeHtml(it.name || '')}"
+            >
+          </div>
+          <div class="flex items-center gap-1.5 sm:w-auto">
+            <input
+              type="number"
+              step="any"
+              min="0"
+              class="field-input text-xs w-28 subitem-target-input"
+              placeholder="เป้า (เว้นได้)"
+              title="ปริมาณเป้าหมาย (เว้นว่างได้หากนับตามจริงหน้างาน)"
+              value="${escapeHtml(targetVal)}"
+            >
+            <input
+              type="text"
+              list="common-units-datalist"
+              class="field-input text-xs w-20 subitem-unit-input"
+              placeholder="หน่วย"
+              value="${escapeHtml(it.unit || '')}"
+            >
+            ${editingTaskId ? `
+              <select class="field-input text-xs w-28 subitem-status-select" title="สถานะรายการย่อย">
+                <option value="Pending" ${it.status === 'Pending' ? 'selected' : ''}>รอทำ</option>
+                <option value="In Progress" ${it.status === 'In Progress' ? 'selected' : ''}>กำลังทำ</option>
+                <option value="Completed" ${it.status === 'Completed' ? 'selected' : ''}>เสร็จแล้ว</option>
+                <option value="Blocked" ${it.status === 'Blocked' ? 'selected' : ''}>ติดปัญหา</option>
+                <option value="Cancelled" ${it.status === 'Cancelled' ? 'selected' : ''}>ยกเลิก</option>
+              </select>
+            ` : ''}
+            <button
+              type="button"
+              data-remove-subitem="${idx}"
+              class="btn btn-outline btn-sm text-red-600 px-2 py-1 text-xs"
+              title="ลบรายการย่อยนี้"
+            >✕</button>
+          </div>
+          ${hasActual ? `<div class="text-[11px] text-blue-700 font-mono sm:ml-6">↳ ทำสะสมแล้ว: ${it.actual_qty} ${escapeHtml(it.unit || '')}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('[data-remove-subitem]').forEach(btn => {
+      btn.onclick = () => {
+        syncDraftSubItemsFromDom();
+        const removeIdx = Number(btn.getAttribute('data-remove-subitem'));
+        draftSubItems.splice(removeIdx, 1);
+        renderDraftSubItems();
+      };
+    });
+  }
+
+  function renderDraftAttachments() {
+    const container = document.getElementById('task-attachments-preview');
+    if (!container) return;
+
+    if (!draftAttachments.length) {
+      container.innerHTML = `
+        <div class="text-xs text-slate-400 text-center py-2 bg-white/80 rounded border border-dashed border-amber-300">
+          ยังไม่มีไฟล์แนบ — กด "📷 แนบรูป" หรือ "🎥 แนบวิดีโอสั้น" เพื่อเก็บภาพกระดาษสั่งงานหรือคลิปหน้างาน
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = draftAttachments.map((att, idx) => {
+      const isVideo = att.media_kind === 'video' || (att.type && att.type.startsWith('video/'));
+      return `
+        <div class="flex items-center justify-between gap-2 p-2 bg-white rounded border border-amber-200 text-xs">
+          <div class="flex items-center gap-2 truncate">
+            <span class="text-base">${isVideo ? '🎥' : '📷'}</span>
+            <div class="truncate">
+              <div class="font-medium text-slate-700 truncate">${escapeHtml(att.name || 'ไฟล์แนบ')}</div>
+              <div class="text-[11px] text-slate-400">${isVideo ? 'วิดีโอสั้น' : 'รูปภาพ'} • ${formatSize(att.size)}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button type="button" data-preview-draft-att="${idx}" class="btn btn-outline btn-sm text-xs px-2 py-0.5">👁️ ดู</button>
+            <button type="button" data-remove-draft-att="${idx}" class="btn btn-outline btn-sm text-red-600 text-xs px-2 py-0.5">🗑️ ลบ</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('[data-preview-draft-att]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.getAttribute('data-preview-draft-att'));
+        const att = draftAttachments[idx];
+        if (!att) return;
+        if (att.rawData) {
+          openMediaViewerWithRawData(att.rawData, att.name, att.media_kind, att.type);
+        } else if (att.id) {
+          openMediaViewerModal(att.id, att.name, att.media_kind);
+        }
+      };
+    });
+
+    container.querySelectorAll('[data-remove-draft-att]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.getAttribute('data-remove-draft-att'));
+        const removed = draftAttachments.splice(idx, 1)[0];
+        if (removed && removed.id && !removed.isNew) {
+          removedMediaIds.push(removed.id);
+        }
+        renderDraftAttachments();
+      };
+    });
+  }
+
+  async function handleFilesSelected(fileList, defaultKind = 'image') {
+    if (!fileList || !fileList.length) return;
+    const maxBytes = API.MAX_MEDIA_SIZE_BYTES || (50 * 1024 * 1024);
+
+    for (const file of Array.from(fileList)) {
+      if (file.size > maxBytes) {
+        if (UTILS.toast) UTILS.toast(`ไฟล์ "${file.name}" มีขนาดเกิน 50 MB กรุณาใช้คลิปสั้นลง`, 'error');
+        else alert(`ไฟล์ "${file.name}" มีขนาดเกิน 50 MB`);
+        continue;
+      }
+
+      const isVideo = (file.type && file.type.startsWith('video/')) || defaultKind === 'video';
+      let rawData = file;
+
+      // สำหรับรูปภาพ หากมีฟังก์ชันบีบอัดรูปให้บีบอัดเพื่อประหยัดพื้นที่
+      if (!isVideo && typeof UTILS.compressImage === 'function') {
+        try {
+          rawData = await UTILS.compressImage(file);
+        } catch (_) {
+          rawData = file;
+        }
+      }
+
+      draftAttachments.push({
+        id: 'med_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        name: file.name || (isVideo ? 'video.mp4' : 'image.jpg'),
+        type: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
+        media_kind: isVideo ? 'video' : 'image',
+        size: file.size || 0,
+        isNew: true,
+        rawData
+      });
+    }
+
+    renderDraftAttachments();
+  }
+
+  function cleanupActiveObjectUrl() {
+    if (activeObjectUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      try { URL.revokeObjectURL(activeObjectUrl); } catch (_) {}
+      activeObjectUrl = null;
+    }
+  }
+
+  function openMediaViewerWithRawData(dataPayload, name, mediaKind, mimeType) {
+    cleanupActiveObjectUrl();
+    const modal = document.getElementById('modal-media-viewer');
+    const titleEl = document.getElementById('media-viewer-title');
+    const bodyEl = document.getElementById('media-viewer-body');
+    if (!modal || !bodyEl) return;
+
+    if (titleEl) titleEl.textContent = `📎 ${name || 'เอกสารแนบใบสั่งงาน'}`;
+
+    let srcUrl = '';
+    if (typeof dataPayload === 'string') {
+      srcUrl = dataPayload;
+    } else if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && dataPayload) {
+      activeObjectUrl = URL.createObjectURL(dataPayload);
+      srcUrl = activeObjectUrl;
+    }
+
+    const isVideo = mediaKind === 'video' || (mimeType && mimeType.startsWith('video/'));
+    if (isVideo) {
+      bodyEl.innerHTML = `
+        <video controls autoplay class="max-h-[70vh] max-w-full rounded shadow-lg bg-black">
+          <source src="${escapeHtml(srcUrl)}" type="${escapeHtml(mimeType || 'video/mp4')}">
+          เบราว์เซอร์ของคุณไม่รองรับการเล่นวิดีโอ
+        </video>
+      `;
+    } else {
+      bodyEl.innerHTML = `
+        <img src="${escapeHtml(srcUrl)}" alt="${escapeHtml(name || 'รูปใบสั่งงาน')}" class="max-h-[72vh] max-w-full object-contain rounded shadow-lg">
+      `;
+    }
+
+    modal.classList.remove('hidden');
+  }
+
+  async function openMediaViewerModal(mediaId, fallbackName = '', fallbackKind = 'image') {
+    if (!mediaId || typeof API.getTaskMedia !== 'function') return;
+    try {
+      const record = await API.getTaskMedia(mediaId);
+      if (!record || !record.data) {
+        if (UTILS.toast) UTILS.toast('ไม่พบข้อมูลไฟล์แนบในเครื่อง', 'error');
+        return;
+      }
+      openMediaViewerWithRawData(record.data, record.name || fallbackName, record.media_kind || fallbackKind, record.type);
+    } catch (err) {
+      if (UTILS.toast) UTILS.toast('ไม่สามารถเปิดไฟล์แนบได้: ' + err.message, 'error');
+    }
+  }
+
+  function closeMediaViewerModal() {
+    const modal = document.getElementById('modal-media-viewer');
+    const bodyEl = document.getElementById('media-viewer-body');
+    if (bodyEl) bodyEl.innerHTML = '';
+    if (modal) modal.classList.add('hidden');
+    cleanupActiveObjectUrl();
   }
 
   // 10. Modal 1: Create / Edit Handlers
   function openCreateModal() {
     editingTaskId = null;
+    draftSubItems = [
+      { id: 'sub_1', name: '', target_qty: null, unit: '', actual_qty: 0, progress_percent: 0, status: 'Pending', issue_note: '' }
+    ];
+    draftAttachments = [];
+    removedMediaIds = [];
+
     document.getElementById('task-modal-title').textContent = '➕ สั่งงานใหม่ (Job Order)';
     document.getElementById('task-form-submit-label').textContent = 'บันทึกใบสั่งงาน';
     document.getElementById('task-input-id').value = '';
@@ -599,12 +1040,15 @@
     document.getElementById('task-input-site').value = '';
     document.getElementById('task-input-location').value = '';
     document.getElementById('task-input-assigned').value = '';
-    document.getElementById('task-input-ordered-by').value = '';
+    document.getElementById('task-input-ordered-by').value = 'เฮีย';
     document.getElementById('task-input-order-date').value = getTodayString();
     document.getElementById('task-input-due-date').value = '';
     document.getElementById('task-input-status').value = 'Pending';
     document.getElementById('task-input-percent').value = '0';
     document.getElementById('task-input-desc').value = '';
+
+    renderDraftSubItems();
+    renderDraftAttachments();
 
     document.getElementById('modal-task-form').classList.remove('hidden');
     document.getElementById('task-input-title').focus?.();
@@ -615,6 +1059,14 @@
     if (!task) return;
 
     editingTaskId = taskId;
+    draftSubItems = Array.isArray(task.sub_items) && task.sub_items.length > 0
+      ? JSON.parse(JSON.stringify(task.sub_items))
+      : [];
+    draftAttachments = Array.isArray(task.attachments)
+      ? JSON.parse(JSON.stringify(task.attachments))
+      : [];
+    removedMediaIds = [];
+
     document.getElementById('task-modal-title').textContent = `✏️ แก้ไขใบสั่งงาน ${task.task_code || '#' + task.id}`;
     document.getElementById('task-form-submit-label').textContent = 'บันทึกการแก้ไข';
     document.getElementById('task-input-id').value = String(task.id);
@@ -622,12 +1074,15 @@
     document.getElementById('task-input-site').value = task.site || '';
     document.getElementById('task-input-location').value = task.location_detail || '';
     document.getElementById('task-input-assigned').value = task.assigned_to || '';
-    document.getElementById('task-input-ordered-by').value = task.ordered_by || '';
+    document.getElementById('task-input-ordered-by').value = task.ordered_by || 'เฮีย';
     document.getElementById('task-input-order-date').value = task.order_date || '';
     document.getElementById('task-input-due-date').value = task.due_date || '';
     document.getElementById('task-input-status').value = task.status || 'Pending';
     document.getElementById('task-input-percent').value = String(task.progress_percent || 0);
     document.getElementById('task-input-desc').value = task.description || '';
+
+    renderDraftSubItems();
+    renderDraftAttachments();
 
     document.getElementById('modal-task-form').classList.remove('hidden');
     document.getElementById('task-input-title').focus?.();
@@ -638,8 +1093,43 @@
     editingTaskId = null;
   }
 
+  async function persistAttachmentsForTask(taskId) {
+    if (typeof API.deleteTaskMedia === 'function') {
+      for (const remId of removedMediaIds) {
+        await API.deleteTaskMedia(remId).catch(() => {});
+      }
+    }
+
+    const savedAttachmentsMeta = [];
+    for (const att of draftAttachments) {
+      if (att.isNew && att.rawData && typeof API.saveTaskMedia === 'function') {
+        const saved = await API.saveTaskMedia(taskId, att.rawData, {
+          id: att.id,
+          name: att.name,
+          type: att.type,
+          size: att.size
+        });
+        savedAttachmentsMeta.push(saved);
+      } else {
+        savedAttachmentsMeta.push({
+          id: att.id,
+          task_id: Number(taskId),
+          name: att.name,
+          type: att.type,
+          media_kind: att.media_kind,
+          size: att.size,
+          created_at: att.created_at || new Date().toISOString()
+        });
+      }
+    }
+    return savedAttachmentsMeta;
+  }
+
   async function handleTaskFormSubmit(e) {
     if (e) e.preventDefault();
+
+    syncDraftSubItemsFromDom();
+    const validSubItems = draftSubItems.filter(it => it && String(it.name || '').trim() !== '');
 
     const title = (document.getElementById('task-input-title')?.value || '').trim();
     const site = (document.getElementById('task-input-site')?.value || '').trim();
@@ -663,7 +1153,7 @@
 
     try {
       if (editingTaskId) {
-        // Update Task
+        const attachmentsMeta = await persistAttachmentsForTask(editingTaskId);
         const patch = {
           title,
           site,
@@ -672,14 +1162,17 @@
           ordered_by: orderedBy,
           order_date: orderDate,
           due_date: dueDate,
-          status,
-          progress_percent: percent,
-          description
+          description,
+          sub_items: validSubItems,
+          attachments: attachmentsMeta
         };
+        if (!validSubItems.length) {
+          patch.status = status;
+          patch.progress_percent = percent;
+        }
         await API.updateTask(editingTaskId, patch);
         if (UTILS.toast) UTILS.toast('บันทึกการแก้ไขเรียบร้อยแล้ว', 'success');
       } else {
-        // Create Task
         const newPayload = {
           title,
           site,
@@ -690,9 +1183,15 @@
           due_date: dueDate,
           status,
           progress_percent: percent,
-          description
+          description,
+          sub_items: validSubItems,
+          attachments: []
         };
-        await API.createTask(newPayload);
+        const created = await API.createTask(newPayload);
+        if (created && created.id && draftAttachments.length > 0 && typeof API.updateTask === 'function') {
+          const attachmentsMeta = await persistAttachmentsForTask(created.id);
+          await API.updateTask(created.id, { attachments: attachmentsMeta });
+        }
         if (UTILS.toast) UTILS.toast('สร้างใบสั่งงานใหม่เรียบร้อยแล้ว', 'success');
       }
 
@@ -713,7 +1212,6 @@
     document.getElementById('timeline-modal-title').textContent = `🔍 ไทม์ไลน์ความคืบหน้า & ปัญหา — ${task.title || ''}`;
     document.getElementById('timeline-modal-subtitle').textContent = `รหัสงาน: ${task.task_code || '#' + task.id} | ไซต์: ${task.site || '-'}`;
 
-    // Reset progress note form
     document.getElementById('timeline-input-percent').value = String(task.progress_percent || 0);
     document.getElementById('timeline-input-date').value = getTodayString();
     document.getElementById('timeline-input-by').value = task.assigned_to || '';
@@ -739,22 +1237,29 @@
       return;
     }
 
-    // Sort descending by date/time
     const sorted = [...history].reverse();
 
-    container.innerHTML = sorted.map((entry, idx) => {
+    container.innerHTML = sorted.map((entry) => {
       const p = Math.round(Number(entry.percent) || 0);
       const by = entry.by ? `โดย ${escapeHtml(entry.by)}` : '';
       const dateText = formatDate(entry.date || entry.created_at);
+      const snapshot = Array.isArray(entry.sub_items_snapshot) ? entry.sub_items_snapshot : [];
 
       return `
         <div class="p-3 bg-white rounded border border-slate-200 text-xs shadow-sm">
           <div class="flex items-center justify-between mb-1">
             <span class="font-semibold text-slate-800">
-              ความคืบหน้า: <span class="text-blue-700">${p}%</span>
+              ความคืบหน้ารวม: <span class="text-blue-700">${p}%</span>
             </span>
             <span class="text-slate-400">${dateText} ${by}</span>
           </div>
+          ${snapshot.length > 0 ? `
+            <div class="mt-1.5 mb-1 pl-2 border-l-2 border-blue-200 space-y-0.5 text-slate-600">
+              ${snapshot.map(s => `
+                <div>• <strong>${escapeHtml(s.name)}</strong>: ${s.added_qty > 0 ? `+${s.added_qty}` : ''} (สะสม ${s.actual_qty || 0}${s.target_qty ? '/' + s.target_qty : ''} ${escapeHtml(s.unit || '')}) [${escapeHtml(s.status)}]</div>
+              `).join('')}
+            </div>
+          ` : ''}
           ${entry.issues ? `
             <div class="text-red-700 mt-1">
               ⚠️ <strong>ปัญหา:</strong> ${escapeHtml(entry.issues)}
@@ -854,7 +1359,6 @@
     const task = allTasks.find(t => t.id === taskId);
     const code = task?.task_code || '#' + taskId;
 
-    // PIN check
     const pinCheck = typeof UTILS.verifyPin === 'function'
       ? UTILS.verifyPin('ใส่รหัส PIN เพื่อยืนยันการลบงาน:')
       : true;
@@ -910,28 +1414,64 @@
 
   // 15. Setup Event Listeners
   function initEvents() {
-    // Search input
     const searchInput = document.getElementById('task-search');
     if (searchInput) {
       searchInput.addEventListener('input', () => renderTasks());
     }
 
-    // Status filter
     const statusFilter = document.getElementById('filter-status');
     if (statusFilter) {
       statusFilter.addEventListener('change', () => renderTasks());
     }
 
-    // Site filter
     const siteFilter = document.getElementById('filter-site');
     if (siteFilter) {
       siteFilter.addEventListener('change', () => renderTasks());
     }
 
-    // Create task button
     const createBtn = document.getElementById('btn-create-task');
     if (createBtn) {
       createBtn.addEventListener('click', openCreateModal);
+    }
+
+    // ปุ่มเพิ่มรายการงานย่อยในฟอร์ม
+    const addSubItemBtn = document.getElementById('btn-add-subitem');
+    if (addSubItemBtn) {
+      addSubItemBtn.addEventListener('click', () => {
+        syncDraftSubItemsFromDom();
+        draftSubItems.push({
+          id: `sub_${Date.now()}_${draftSubItems.length + 1}`,
+          name: '',
+          target_qty: null,
+          unit: '',
+          actual_qty: 0,
+          progress_percent: 0,
+          status: 'Pending',
+          issue_note: ''
+        });
+        renderDraftSubItems();
+      });
+    }
+
+    // ปุ่มแนบรูปภาพและวิดีโอสั้น
+    const btnAttachPhoto = document.getElementById('btn-attach-photo');
+    const inputAttachPhoto = document.getElementById('input-attach-photo');
+    if (btnAttachPhoto && inputAttachPhoto) {
+      btnAttachPhoto.addEventListener('click', () => inputAttachPhoto.click());
+      inputAttachPhoto.addEventListener('change', async (e) => {
+        await handleFilesSelected(e.target.files, 'image');
+        inputAttachPhoto.value = '';
+      });
+    }
+
+    const btnAttachVideo = document.getElementById('btn-attach-video');
+    const inputAttachVideo = document.getElementById('input-attach-video');
+    if (btnAttachVideo && inputAttachVideo) {
+      btnAttachVideo.addEventListener('click', () => inputAttachVideo.click());
+      inputAttachVideo.addEventListener('change', async (e) => {
+        await handleFilesSelected(e.target.files, 'video');
+        inputAttachVideo.value = '';
+      });
     }
 
     // Modal 1 controls
@@ -947,6 +1487,9 @@
     document.getElementById('btn-close-complete-modal')?.addEventListener('click', closeCompleteModal);
     document.getElementById('btn-cancel-complete-modal')?.addEventListener('click', closeCompleteModal);
     document.getElementById('complete-task-form')?.addEventListener('submit', handleCompleteFormSubmit);
+
+    // Modal 4 controls (Media Viewer)
+    document.getElementById('btn-close-media-viewer')?.addEventListener('click', closeMediaViewerModal);
   }
 
   // 16. Initialize Page

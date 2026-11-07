@@ -19,6 +19,8 @@
   let availableTasks = [];
   let lastAutoFilledDetail = '';
   let lastAutoFilledRequester = '';
+  let logSubItemsState = []; // รายการย่อยของใบสั่งงานที่เลือก [{ id, name, base_actual_qty, added_qty, target_qty, unit, status, progress_percent, issue_note }]
+  let newLogSubItemsState = []; // รายการย่อยที่เพิ่มใหม่จากหน้างาน [{ id, name, added_qty, target_qty, unit, status, progress_percent, issue_note }]
 
   // ─── Helper: safe number ─────────────────────────────
   function safeNum(v) {
@@ -39,18 +41,30 @@
           </div>
 
           <div id="task-update-section" class="hidden p-4 rounded-lg space-y-3" style="display:none;background:var(--paper-warm);border:1px solid var(--line);">
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-semibold uppercase tracking-wider" style="color:var(--blueprint)">บันทึกความคืบหน้าและปัญหาของใบสั่งงาน</span>
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <span class="text-xs font-semibold uppercase tracking-wider" style="color:var(--blueprint)">📋 บันทึกผลงานตามรายการย่อย & ความคืบหน้าใบสั่งงาน</span>
               <span id="task-code-badge" class="font-mono text-xs px-2 py-0.5 rounded bg-[var(--paper)] border border-[var(--line)]"></span>
             </div>
-            <div class="grid sm:grid-cols-3 gap-3">
+
+            <!-- ตารางรายการงานย่อยสำหรับลงบันทึกประจำวัน -->
+            <div id="task-subitems-log-wrapper" class="space-y-2 pt-1">
+              <div id="task-subitems-log-list" class="space-y-2"></div>
+              <div id="task-new-subitems-log-list" class="space-y-2"></div>
+              <div class="flex justify-end pt-1">
+                <button type="button" id="btn-add-log-subitem" class="btn btn-outline btn-sm text-xs">
+                  ➕ เพิ่มรายการย่อยหน้างาน (งานพ่วง/งานงอก)
+                </button>
+              </div>
+            </div>
+
+            <div class="grid sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/80">
               <div>
-                <label class="field-label text-xs" for="f-task-progress">ความคืบหน้าของงานวันนี้ (%)</label>
+                <label class="field-label text-xs" for="f-task-progress">ความคืบหน้ารวมวันนี้ (%)</label>
                 <input type="number" id="f-task-progress" class="field-input text-sm" min="0" max="100" placeholder="0 - 100">
               </div>
               <div class="sm:col-span-2">
                 <label class="field-label text-xs" for="f-task-issues">ปัญหาที่พบหน้างานวันนี้ (ถ้ามี)</label>
-                <input type="text" id="f-task-issues" class="field-input text-sm" placeholder="เช่น วัสดุส่งช้า, ฝนตก">
+                <input type="text" id="f-task-issues" class="field-input text-sm" placeholder="เช่น วัสดุส่งช้า, ฝนตก (สรุปอัตโนมัติจากรายการที่ติดปัญหา)">
               </div>
             </div>
             <div>
@@ -166,6 +180,24 @@
 
     document.getElementById('f-task').addEventListener('change', onTaskChange);
     document.getElementById('log-form').addEventListener('submit', onSubmit);
+
+    const addLogSubItemBtn = document.getElementById('btn-add-log-subitem');
+    if (addLogSubItemBtn) {
+      addLogSubItemBtn.addEventListener('click', () => {
+        newLogSubItemsState.push({
+          id: `new_sub_${Date.now()}_${newLogSubItemsState.length + 1}`,
+          name: '',
+          added_qty: 0,
+          target_qty: null,
+          unit: '',
+          status: 'In Progress',
+          progress_percent: 50,
+          issue_note: ''
+        });
+        const currentTask = getSelectedTaskObj();
+        renderTaskSubItemsForLog(currentTask);
+      });
+    }
 
     // Image upload handlers
     setupImageUpload();
@@ -588,6 +620,361 @@
     }
   }
 
+  function getSelectedTaskObj() {
+    const taskSelect = document.getElementById('f-task');
+    if (!taskSelect || !taskSelect.value) return null;
+    return availableTasks.find(t => String(t.id) === String(taskSelect.value)) || null;
+  }
+
+  function initSubItemsStateForTask(task) {
+    const rawItems = Array.isArray(task?.sub_items) ? task.sub_items : [];
+    logSubItemsState = rawItems.map(it => ({
+      id: it.id,
+      name: it.name || '',
+      base_actual_qty: Number(it.actual_qty) || 0,
+      added_qty: 0,
+      target_qty: it.target_qty != null && Number(it.target_qty) > 0 ? Number(it.target_qty) : null,
+      unit: it.unit || '',
+      status: it.status || 'Pending',
+      progress_percent: Number(it.progress_percent) || 0,
+      issue_note: it.issue_note || ''
+    }));
+    newLogSubItemsState = [];
+  }
+
+  function buildAutoDetailText(task) {
+    if (!task) return '';
+    let header = task.title || '';
+    if (task.location_detail) {
+      header += ` (${task.location_detail})`;
+    } else if (task.description) {
+      header += ` - ${task.description}`;
+    }
+
+    const activeLines = [];
+    logSubItemsState.forEach((it) => {
+      const added = Number(it.added_qty) || 0;
+      const totalActual = Math.round(((Number(it.base_actual_qty) || 0) + added) * 100) / 100;
+      const unitStr = it.unit ? ` ${it.unit}` : '';
+      if (it.status === 'Cancelled') {
+        activeLines.push(`- ${it.name}: ยกเลิกรายการ`);
+      } else if (it.status === 'Blocked') {
+        activeLines.push(`- ${it.name}: ติดปัญหา (${it.issue_note || 'รอดำเนินการแก้ไข'})`);
+      } else if (added > 0 || it.status === 'Completed') {
+        const targetStr = it.target_qty ? `/${it.target_qty}` : '';
+        const statusTag = it.status === 'Completed' ? ' [เสร็จแล้ว]' : '';
+        activeLines.push(`- ${it.name}: วันนี้ทำได้ ${added}${unitStr} (สะสม ${totalActual}${targetStr}${unitStr})${statusTag}`);
+      }
+    });
+
+    newLogSubItemsState.forEach((it) => {
+      const name = String(it.name || '').trim();
+      if (!name) return;
+      const added = Number(it.added_qty) || 0;
+      const unitStr = it.unit ? ` ${it.unit}` : '';
+      const statusTag = it.status === 'Completed' ? ' [เสร็จแล้ว]' : (it.status === 'Blocked' ? ` [ติดปัญหา: ${it.issue_note || ''}]` : '');
+      activeLines.push(`- (งานเพิ่มหน้างาน) ${name}: ${added > 0 ? `ทำได้ ${added}${unitStr}` : ''}${statusTag}`);
+    });
+
+    if (activeLines.length > 0) {
+      return `${header}\nผลงานวันนี้:\n${activeLines.join('\n')}`;
+    }
+    return header;
+  }
+
+  function recalculateAndAutoFillFromSubItems(task) {
+    const allCombined = [
+      ...logSubItemsState.map(it => {
+        const totalActual = Math.round(((Number(it.base_actual_qty) || 0) + (Number(it.added_qty) || 0)) * 100) / 100;
+        let pct = Number(it.progress_percent) || 0;
+        let status = it.status || 'Pending';
+        if (status === 'Completed') {
+          pct = 100;
+        } else if (status === 'Cancelled') {
+          pct = 0;
+        } else if (it.target_qty && it.target_qty > 0) {
+          pct = Math.min(100, Math.round((totalActual / it.target_qty) * 100));
+          if (pct >= 100 && status !== 'Blocked') status = 'Completed';
+          else if (totalActual > 0 && status === 'Pending') status = 'In Progress';
+        } else if ((Number(it.added_qty) || 0) > 0 && status === 'Pending') {
+          status = 'In Progress';
+        }
+        return { ...it, actual_qty: totalActual, progress_percent: pct, status };
+      }),
+      ...newLogSubItemsState
+        .filter(it => String(it.name || '').trim() !== '')
+        .map(it => ({
+          ...it,
+          actual_qty: Number(it.added_qty) || 0,
+          progress_percent: it.status === 'Completed' ? 100 : (Number(it.progress_percent) || 50)
+        }))
+    ];
+
+    if (allCombined.length > 0) {
+      const active = allCombined.filter(i => i.status !== 'Cancelled');
+      const overallPct = active.length > 0
+        ? Math.max(0, Math.min(100, Math.round(active.reduce((s, i) => s + (Number(i.progress_percent) || 0), 0) / active.length)))
+        : 0;
+
+      const progressInput = document.getElementById('f-task-progress');
+      if (progressInput) {
+        progressInput.value = String(overallPct);
+      }
+
+      const blockedNotes = active
+        .filter(i => i.status === 'Blocked' || (i.issue_note && i.issue_note.trim() !== ''))
+        .map(i => i.issue_note ? `${i.name}: ${i.issue_note}` : `${i.name}: ติดปัญหา`);
+
+      const issuesInput = document.getElementById('f-task-issues');
+      if (issuesInput && blockedNotes.length > 0) {
+        issuesInput.value = blockedNotes.join(' | ');
+      }
+    }
+
+    // อัปเดตช่องรายละเอียดงาน (#f-detail) อัตโนมัติเมื่อมีการลงปริมาณหรือเปลี่ยนสถานะรายการย่อย
+    const detailInput = document.getElementById('f-detail');
+    if (detailInput && task) {
+      const nextDetail = buildAutoDetailText(task);
+      if (!detailInput.value.trim() || detailInput.value === lastAutoFilledDetail) {
+        detailInput.value = nextDetail;
+        lastAutoFilledDetail = nextDetail;
+      }
+    }
+  }
+
+  function renderTaskSubItemsForLog(task) {
+    const listEl = document.getElementById('task-subitems-log-list');
+    const newListEl = document.getElementById('task-new-subitems-log-list');
+    if (!listEl || !newListEl) return;
+
+    if (!logSubItemsState.length) {
+      listEl.innerHTML = `
+        <div class="text-xs text-slate-500 bg-white/80 p-2.5 rounded border border-dashed border-slate-300">
+          ใบสั่งงานนี้ยังไม่ได้แยกรายการย่อยไว้ — สามารถกรอก % ความคืบหน้ารวมด้านล่าง หรือกดปุ่ม <strong>"➕ เพิ่มรายการย่อยหน้างาน"</strong> เพื่อบันทึกปริมาณงานที่ทำจริงวันนี้ได้ทันที
+        </div>
+      `;
+    } else {
+      listEl.innerHTML = logSubItemsState.map((it, idx) => {
+        const isCompleted = it.status === 'Completed';
+        const isBlocked = it.status === 'Blocked';
+        const isCancelled = it.status === 'Cancelled';
+        const isInProgress = it.status === 'In Progress';
+        const unitStr = it.unit ? Utils.escapeHtml(it.unit) : 'หน่วย';
+        const hasTarget = it.target_qty != null && it.target_qty > 0;
+        const totalAfterToday = Math.round(((Number(it.base_actual_qty) || 0) + (Number(it.added_qty) || 0)) * 100) / 100;
+
+        return `
+          <div class="p-3 bg-white rounded-lg border ${isBlocked ? 'border-red-300 bg-red-50/30' : (isCompleted ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200')} space-y-2">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+              <div class="text-xs font-semibold text-slate-800 ${isCancelled ? 'line-through opacity-50' : ''}">
+                ${idx + 1}. ${Utils.escapeHtml(it.name)}
+                <span class="font-mono font-normal text-slate-500 ml-1">
+                  (สะสมเดิม: ${it.base_actual_qty}${hasTarget ? '/' + it.target_qty : ''} ${unitStr} → รวมวันนี้: <strong>${totalAfterToday}</strong> ${unitStr})
+                </span>
+              </div>
+              <!-- ปุ่มกดเปลี่ยนสถานะรายการย่อยในคลิกเดียว -->
+              <div class="flex flex-wrap gap-1">
+                <button type="button" data-sub-status-idx="${idx}" data-status-val="In Progress"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${isInProgress ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}">
+                  🔨 กำลังทำ
+                </button>
+                <button type="button" data-sub-status-idx="${idx}" data-status-val="Completed"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${isCompleted ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50'}">
+                  ✓ เสร็จรายการนี้
+                </button>
+                <button type="button" data-sub-status-idx="${idx}" data-status-val="Blocked"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${isBlocked ? 'bg-red-600 text-white border-red-600' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">
+                  ⚠️ ติดปัญหา
+                </button>
+                <button type="button" data-sub-status-idx="${idx}" data-status-val="Cancelled"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${isCancelled ? 'bg-slate-600 text-white border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-100'}">
+                  ✕ ยกเลิก
+                </button>
+              </div>
+            </div>
+
+            ${!isCancelled ? `
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                <div>
+                  <label class="text-[11px] text-slate-500 block mb-0.5">ปริมาณที่ทำได้วันนี้ (+ ${unitStr})</label>
+                  <input type="number" step="any" min="0" data-sub-added-idx="${idx}"
+                    class="field-input text-xs py-1" placeholder="กรอกจำนวนที่ทำได้วันนี้"
+                    value="${it.added_qty > 0 ? it.added_qty : ''}">
+                </div>
+                <div>
+                  <label class="text-[11px] text-slate-500 block mb-0.5">เป้าหมายรวม (${unitStr}) ${!hasTarget ? '<span class="text-blue-600">(เติมทีหลังได้)</span>' : ''}</label>
+                  <input type="number" step="any" min="0" data-sub-target-idx="${idx}"
+                    class="field-input text-xs py-1" placeholder="เว้นว่าง = นับตามจริง"
+                    value="${hasTarget ? it.target_qty : ''}">
+                </div>
+                <div>
+                  <label class="text-[11px] text-slate-500 block mb-0.5">ความคืบหน้ารายการนี้ (%)</label>
+                  <input type="number" min="0" max="100" data-sub-pct-idx="${idx}"
+                    class="field-input text-xs py-1" placeholder="0-100%"
+                    value="${it.progress_percent || 0}">
+                </div>
+              </div>
+            ` : ''}
+
+            ${isBlocked ? `
+              <div class="pt-1">
+                <input type="text" data-sub-issue-idx="${idx}"
+                  class="field-input text-xs py-1 border-red-300 bg-white w-full"
+                  placeholder="⚠️ ระบุปัญหาของรายการนี้ เช่น วัสดุยังไม่มา, ติดแนวท่อเดิม..."
+                  value="${Utils.escapeHtml(it.issue_note || '')}">
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // รายการย่อยที่เพิ่มใหม่หน้างาน (งานงอก/งานพ่วง)
+    if (!newLogSubItemsState.length) {
+      newListEl.innerHTML = '';
+    } else {
+      newListEl.innerHTML = newLogSubItemsState.map((nit, nidx) => `
+        <div class="p-3 bg-blue-50/40 rounded-lg border border-blue-200 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-blue-800">➕ รายการเพิ่มหน้างาน #${nidx + 1}</span>
+            <button type="button" data-remove-new-sub="${nidx}" class="text-xs text-red-600 hover:underline">🗑️ ลบรายการนี้</button>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <div class="sm:col-span-2">
+              <input type="text" data-new-sub-name="${nidx}" class="field-input text-xs py-1 w-full"
+                placeholder="ชื่อรายการที่ทำเพิ่ม (เช่น สกัดพื้น, วางบ่อพัก)" value="${Utils.escapeHtml(nit.name || '')}">
+            </div>
+            <div>
+              <input type="number" step="any" min="0" data-new-sub-qty="${nidx}" class="field-input text-xs py-1 w-full"
+                placeholder="ทำได้วันนี้" value="${nit.added_qty > 0 ? nit.added_qty : ''}">
+            </div>
+            <div>
+              <input type="text" data-new-sub-unit="${nidx}" class="field-input text-xs py-1 w-full"
+                placeholder="หน่วย (เช่น เมตร, จุด)" value="${Utils.escapeHtml(nit.unit || '')}">
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // ผูก Event Listeners สำหรับรายการย่อยเดิม
+    listEl.querySelectorAll('[data-sub-status-idx]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.getAttribute('data-sub-status-idx'));
+        const statusVal = btn.getAttribute('data-status-val');
+        const item = logSubItemsState[idx];
+        if (!item) return;
+        item.status = statusVal;
+        if (statusVal === 'Completed') {
+          item.progress_percent = 100;
+          if (item.target_qty && item.target_qty > item.base_actual_qty && !item.added_qty) {
+            item.added_qty = Math.max(0, Math.round((item.target_qty - item.base_actual_qty) * 100) / 100);
+          }
+        } else if (statusVal === 'Cancelled') {
+          item.progress_percent = 0;
+          item.added_qty = 0;
+        }
+        renderTaskSubItemsForLog(task);
+        recalculateAndAutoFillFromSubItems(task);
+      };
+    });
+
+    listEl.querySelectorAll('[data-sub-added-idx]').forEach(inp => {
+      inp.oninput = () => {
+        const idx = Number(inp.getAttribute('data-sub-added-idx'));
+        const item = logSubItemsState[idx];
+        if (!item) return;
+        item.added_qty = Math.max(0, Number(inp.value) || 0);
+        const totalActual = (Number(item.base_actual_qty) || 0) + item.added_qty;
+        if (item.target_qty && item.target_qty > 0) {
+          item.progress_percent = Math.min(100, Math.round((totalActual / item.target_qty) * 100));
+          if (item.progress_percent >= 100 && item.status !== 'Blocked') item.status = 'Completed';
+          else if (item.added_qty > 0 && item.status === 'Pending') item.status = 'In Progress';
+        } else if (item.added_qty > 0 && item.status === 'Pending') {
+          item.status = 'In Progress';
+        }
+        recalculateAndAutoFillFromSubItems(task);
+      };
+    });
+
+    listEl.querySelectorAll('[data-sub-target-idx]').forEach(inp => {
+      inp.oninput = () => {
+        const idx = Number(inp.getAttribute('data-sub-target-idx'));
+        const item = logSubItemsState[idx];
+        if (!item) return;
+        const v = Number(inp.value);
+        item.target_qty = v > 0 ? v : null;
+        if (item.target_qty) {
+          const totalActual = (Number(item.base_actual_qty) || 0) + (Number(item.added_qty) || 0);
+          item.progress_percent = Math.min(100, Math.round((totalActual / item.target_qty) * 100));
+        }
+        recalculateAndAutoFillFromSubItems(task);
+      };
+    });
+
+    listEl.querySelectorAll('[data-sub-pct-idx]').forEach(inp => {
+      inp.oninput = () => {
+        const idx = Number(inp.getAttribute('data-sub-pct-idx'));
+        const item = logSubItemsState[idx];
+        if (!item) return;
+        item.progress_percent = Math.max(0, Math.min(100, Number(inp.value) || 0));
+        if (item.progress_percent >= 100 && item.status !== 'Blocked') item.status = 'Completed';
+        else if (item.progress_percent > 0 && item.status === 'Pending') item.status = 'In Progress';
+        recalculateAndAutoFillFromSubItems(task);
+      };
+    });
+
+    listEl.querySelectorAll('[data-sub-issue-idx]').forEach(inp => {
+      inp.oninput = () => {
+        const idx = Number(inp.getAttribute('data-sub-issue-idx'));
+        const item = logSubItemsState[idx];
+        if (!item) return;
+        item.issue_note = inp.value;
+        recalculateAndAutoFillFromSubItems(task);
+      };
+    });
+
+    // ผูก Event Listeners สำหรับรายการย่อยที่เพิ่มใหม่หน้างาน
+    newListEl.querySelectorAll('[data-remove-new-sub]').forEach(btn => {
+      btn.onclick = () => {
+        const nidx = Number(btn.getAttribute('data-remove-new-sub'));
+        newLogSubItemsState.splice(nidx, 1);
+        renderTaskSubItemsForLog(task);
+        recalculateAndAutoFillFromSubItems(task);
+      };
+    });
+
+    newListEl.querySelectorAll('[data-new-sub-name]').forEach(inp => {
+      inp.oninput = () => {
+        const nidx = Number(inp.getAttribute('data-new-sub-name'));
+        if (newLogSubItemsState[nidx]) {
+          newLogSubItemsState[nidx].name = inp.value;
+          recalculateAndAutoFillFromSubItems(task);
+        }
+      };
+    });
+
+    newListEl.querySelectorAll('[data-new-sub-qty]').forEach(inp => {
+      inp.oninput = () => {
+        const nidx = Number(inp.getAttribute('data-new-sub-qty'));
+        if (newLogSubItemsState[nidx]) {
+          newLogSubItemsState[nidx].added_qty = Math.max(0, Number(inp.value) || 0);
+          recalculateAndAutoFillFromSubItems(task);
+        }
+      };
+    });
+
+    newListEl.querySelectorAll('[data-new-sub-unit]').forEach(inp => {
+      inp.oninput = () => {
+        const nidx = Number(inp.getAttribute('data-new-sub-unit'));
+        if (newLogSubItemsState[nidx]) {
+          newLogSubItemsState[nidx].unit = inp.value;
+          recalculateAndAutoFillFromSubItems(task);
+        }
+      };
+    });
+  }
+
   function onTaskChange() {
     const taskSelect = document.getElementById('f-task');
     const updateSection = document.getElementById('task-update-section');
@@ -597,6 +984,8 @@
     if (!val) {
       updateSection.style.display = 'none';
       updateSection.classList.add('hidden');
+      logSubItemsState = [];
+      newLogSubItemsState = [];
       return;
     }
 
@@ -611,6 +1000,9 @@
       badge.textContent = task.task_code || `TSK-${task.id}`;
     }
 
+    initSubItemsStateForTask(task);
+    renderTaskSubItemsForLog(task);
+
     // Auto-fill site
     const siteInput = document.getElementById('f-site');
     if (siteInput && task.site) {
@@ -620,12 +1012,7 @@
     // Auto-fill detail
     const detailInput = document.getElementById('f-detail');
     if (detailInput) {
-      let fullDetail = task.title || '';
-      if (task.location_detail) {
-        fullDetail += ` (${task.location_detail})`;
-      } else if (task.description) {
-        fullDetail += ` - ${task.description}`;
-      }
+      const fullDetail = buildAutoDetailText(task);
       if (!detailInput.value.trim() || detailInput.value === lastAutoFilledDetail) {
         detailInput.value = fullDetail;
         lastAutoFilledDetail = fullDetail;
@@ -724,6 +1111,10 @@
         const badge = document.getElementById('task-code-badge');
         if (badge && task) {
           badge.textContent = task.task_code || `TSK-${task.id}`;
+        }
+        if (task) {
+          initSubItemsStateForTask(task);
+          renderTaskSubItemsForLog(task);
         }
         const progressInput = document.getElementById('f-task-progress');
         if (progressInput && task) {
@@ -878,12 +1269,41 @@
           const progressVal = safeNum(document.getElementById('f-task-progress')?.value);
           const issuesVal = (document.getElementById('f-task-issues')?.value || '').trim();
           const resolutionVal = (document.getElementById('f-task-resolution')?.value || '').trim();
+
+          const subItemsUpdates = logSubItemsState.length > 0
+            ? logSubItemsState.map(it => ({
+                id: it.id,
+                name: it.name,
+                added_qty: Number(it.added_qty) || 0,
+                target_qty: it.target_qty,
+                status: it.status,
+                progress_percent: Number(it.progress_percent) || 0,
+                issue_note: it.issue_note || ''
+              }))
+            : undefined;
+
+          const validNewSubItems = newLogSubItemsState
+            .filter(it => String(it.name || '').trim() !== '')
+            .map(it => ({
+              id: it.id,
+              name: String(it.name).trim(),
+              added_qty: Number(it.added_qty) || 0,
+              actual_qty: Number(it.added_qty) || 0,
+              target_qty: null,
+              unit: String(it.unit || '').trim(),
+              status: it.status || 'In Progress',
+              progress_percent: Number(it.progress_percent) || 50,
+              issue_note: it.issue_note || ''
+            }));
+
           await Api.addTaskProgress(selectedTaskId, {
             percent: progressVal,
             issues: issuesVal,
             resolution: resolutionVal,
             by: payload.requestedBy || 'หน้างาน (Daily Log)',
-            date: apiDate
+            date: apiDate,
+            sub_items_updates: subItemsUpdates,
+            new_sub_items: validNewSubItems.length > 0 ? validNewSubItems : undefined
           });
         }
         return res;

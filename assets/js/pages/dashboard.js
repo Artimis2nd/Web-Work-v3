@@ -58,9 +58,135 @@
   // ============================================================
   // Backup Viewer Modal (รองรับทั้ง Supabase & ดาวน์โหลดไฟล์ JSON)
   // ============================================================
+  // Backup Viewer & Payroll Period Cutoff Modals
+  // ============================================================
   function closeModal() {
     const backdrop = document.getElementById('backup-modal-backdrop');
     if (backdrop) backdrop.remove();
+  }
+
+  async function openCutoffPeriodModal(recentGroups = []) {
+    closeModal();
+    const dates = recentGroups.map(g => String(g.date || '').slice(0, 10)).filter(Boolean).sort();
+    const defaultStart = dates.length > 0 ? dates[0] : new Date().toISOString().slice(0, 10);
+    const defaultEnd = dates.length > 0 ? dates[dates.length - 1] : new Date().toISOString().slice(0, 10);
+
+    let allTasksNow = [];
+    try {
+      if (typeof Api.getTasks === 'function') {
+        allTasksNow = await Api.getTasks();
+      }
+    } catch (_) {}
+
+    const completedTasksCount = allTasksNow.filter(t => t.status === 'Completed').length;
+    const activeTasksCount = allTasksNow.filter(t => t.status !== 'Completed').length;
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'backup-modal-backdrop';
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="modal-box" style="max-width:540px">
+        <div class="modal-header">
+          <h3 class="font-display text-lg font-semibold">💰 ตัดงวดจ่ายค่าแรง & เก็บประวัติ (Payroll Cutoff)</h3>
+          <button id="modal-close-btn" class="btn btn-outline btn-sm">✕ ปิด</button>
+        </div>
+        <form id="cutoff-period-form" class="modal-body space-y-4">
+          <div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-slate-700 space-y-1">
+            <div class="font-semibold text-amber-900">📌 สิ่งที่ระบบจะจัดการให้อัตโนมัติเมื่อตัดงวด:</div>
+            <div>1. เก็บบันทึกรายวันของช่วงวันที่เลือก + ใบสั่งงานที่ <strong>เสร็จแล้ว (${completedTasksCount} ใบ)</strong> เข้าชุดประวัติ Backup</div>
+            <div>2. บันทึกยอดวันเข้าทำและค่าแรงสะสมเข้าใบสั่งงานที่ <strong>ยังไม่เสร็จ (${activeTasksCount} ใบ)</strong> เพื่อทำต่อเนื่องในงวดหน้า</div>
+            <div>3. ลบเฉพาะบันทึกรายวันของช่วงวันที่ตัดจ่ายออกจากหน้าแรก (วันที่ทำในงวดใหม่จะยังอยู่ครบ)</div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="field-label text-xs" for="cutoff-start-date">ตั้งแต่วันที่ <span class="text-red-500">*</span></label>
+              <input type="date" id="cutoff-start-date" class="field-input w-full" value="${Utils.escapeHtml(defaultStart)}" required>
+            </div>
+            <div>
+              <label class="field-label text-xs" for="cutoff-end-date">ถึงวันที่ <span class="text-red-500">*</span></label>
+              <input type="date" id="cutoff-end-date" class="field-input w-full" value="${Utils.escapeHtml(defaultEnd)}" required>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label text-xs" for="cutoff-period-name">ชื่องวดงาน (เว้นว่างให้ตั้งตามวันที่อัตโนมัติได้)</label>
+            <input type="text" id="cutoff-period-name" class="field-input w-full text-sm" placeholder="เช่น งวดวันที่ 1 - 15 พ.ย. 2026">
+          </div>
+
+          <div id="cutoff-preview-box" class="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs space-y-1">
+            <!-- สรุปยอดก่อนตัดงวด -->
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
+            <button type="button" id="cutoff-cancel-btn" class="btn btn-outline">ยกเลิก</button>
+            <button type="submit" id="cutoff-submit-btn" class="btn btn-primary">
+              ✅ ยืนยันตัดงวด & เก็บ Backup
+            </button>
+          </div>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+    document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+    document.getElementById('cutoff-cancel-btn').addEventListener('click', closeModal);
+
+    const startInp = document.getElementById('cutoff-start-date');
+    const endInp = document.getElementById('cutoff-end-date');
+    const previewBox = document.getElementById('cutoff-preview-box');
+
+    function updateCutoffPreview() {
+      const s = startInp.value;
+      const e = endInp.value;
+      const matched = recentGroups.filter(g => {
+        const d = String(g.date || '').slice(0, 10);
+        if (s && d < s) return false;
+        if (e && d > e) return false;
+        return true;
+      });
+      const remaining = recentGroups.length - matched.length;
+      const sumPay = matched.reduce((acc, g) => acc + (Number(g.totalPay) || 0), 0);
+
+      previewBox.innerHTML = `
+        <div class="flex justify-between"><span>จำนวนใบงานรายวันที่จะตัดจ่ายงวดนี้:</span><strong class="font-mono text-blue-700">${matched.length} ใบงาน</strong></div>
+        <div class="flex justify-between"><span>ยอดค่าแรงรวมในงวดที่เลือก:</span><strong class="font-mono text-emerald-700">฿${Utils.money(sumPay)}</strong></div>
+        <div class="flex justify-between"><span>ใบงานรายวันที่จะคงเหลือในหน้าแรก (งวดใหม่):</span><strong class="font-mono">${remaining} ใบงาน</strong></div>
+      `;
+    }
+
+    startInp.addEventListener('change', updateCutoffPreview);
+    endInp.addEventListener('change', updateCutoffPreview);
+    updateCutoffPreview();
+
+    const form = document.getElementById('cutoff-period-form');
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const startDate = startInp.value;
+      const endDate = endInp.value;
+      const customName = (document.getElementById('cutoff-period-name')?.value || '').trim();
+
+      if (startDate && endDate && startDate > endDate) {
+        Utils.toast('วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด', 'error');
+        return;
+      }
+      if (!Utils.verifyPin('ใส่รหัส PIN (1225) เพื่อยืนยันการตัดงวดจ่ายค่าแรง:')) return;
+
+      const submitBtn = document.getElementById('cutoff-submit-btn');
+      try {
+        const result = await Utils.animateProgress(
+          submitBtn,
+          Api.closePayrollPeriod({ startDate, endDate, customName, archiveCompletedTasks: true }),
+          'กำลังตัดงวดและเก็บสำรองข้อมูล...',
+          '✅ ตัดงวดสำเร็จ'
+        );
+        Utils.toast(`ตัดงวดสำเร็จ: ${result.fileName} (เก็บรายวัน ${result.archivedGroupsCount} ใบ, ปิดใบสั่งงานที่เสร็จ ${result.archivedCompletedTasksCount} ใบ)`, 'success');
+        closeModal();
+        load();
+      } catch (err) {
+        Utils.toast(err.message, 'error');
+      }
+    });
   }
 
   function openBackupListModal() {
@@ -69,9 +195,9 @@
     backdrop.id = 'backup-modal-backdrop';
     backdrop.className = 'modal-backdrop';
     backdrop.innerHTML = `
-      <div class="modal-box">
+      <div class="modal-box" style="max-width:760px">
         <div class="modal-header">
-          <h3 class="font-display text-lg font-semibold">โหลดบันทึกจาก Backup (เบิกงวด)</h3>
+          <h3 class="font-display text-lg font-semibold">📂 ประวัติงวดงานย้อนหลัง (Backup เบิกงวด)</h3>
           <button id="modal-close-btn" class="btn btn-outline btn-sm">✕ ปิด</button>
         </div>
         <div id="modal-body" class="modal-body">
@@ -94,14 +220,17 @@
       const files = await Api.listBackups();
       if (!body.isConnected) return;
       if (!files.length) {
-        body.innerHTML = `<div class="text-center py-6" style="color:var(--ink-soft)">ยังไม่มีข้อมูลสำรอง — กดปุ่ม "💾 Backup ไฟล์" ก่อน</div>`;
+        body.innerHTML = `<div class="text-center py-6" style="color:var(--ink-soft)">ยังไม่มีข้อมูลสำรอง — กดปุ่ม "💰 ตัดงวดค่าแรง" หรือ "💾 Backup ไฟล์" ก่อน</div>`;
         return;
       }
       body.innerHTML = `
         <div class="flex flex-col gap-2">
           ${files.map(f => `
             <button class="btn btn-outline w-full justify-between backup-file-row" data-file-id="${Utils.escapeHtml(f.id)}">
-              <span>📦 ${Utils.escapeHtml(f.name)}</span>
+              <div class="flex items-center gap-2 text-left">
+                <span>📦 ${Utils.escapeHtml(f.name)}</span>
+                ${f.completedTasksCount ? `<span class="badge badge-success text-[11px]">ใบสั่งงานที่จบ ${f.completedTasksCount} ใบ</span>` : ''}
+              </div>
               <span class="font-mono text-xs" style="color:var(--ink-soft)">${Utils.formatDate(f.createdDate)}</span>
             </button>
           `).join('')}
@@ -125,9 +254,10 @@
       const data = await Api.getBackupData({ fileId });
       if (!body.isConnected) return;
       const logs = data.logs || [];
+      const completedTasks = data.completedTasks || [];
       const backHtml = `<div class="mt-3"><button id="back-to-list-btn" class="btn btn-outline btn-sm">← กลับไปเลือกรายการอื่น</button></div>`;
 
-      if (!logs.length) {
+      if (!logs.length && !completedTasks.length) {
         body.innerHTML = `<div class="text-center py-6" style="color:var(--ink-soft)">ไม่พบข้อมูลใบงานในชุดสำรองนี้</div>${backHtml}`;
         document.getElementById('back-to-list-btn').addEventListener('click', loadBackupList);
         return;
@@ -149,25 +279,48 @@
         `;
       }).join('');
 
+      const tasksHtml = completedTasks.length > 0 ? `
+        <div class="mt-4 pt-3 border-t border-slate-200">
+          <div class="text-xs font-semibold text-emerald-800 mb-2">🏁 ใบสั่งงานที่เสร็จสมบูรณ์และถูกเก็บในงวดนี้ (${completedTasks.length} ใบ):</div>
+          <div class="space-y-1.5 max-h-44 overflow-y-auto">
+            ${completedTasks.map(ct => `
+              <label class="flex items-center justify-between p-2 rounded bg-emerald-50/60 border border-emerald-200 text-xs cursor-pointer">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" class="backup-task-checkbox" value="${Utils.escapeHtml(ct.id)}">
+                  <span class="font-mono font-semibold text-slate-700">${Utils.escapeHtml(ct.task_code || '#' + ct.id)}</span>
+                  <span class="font-medium text-slate-800">${Utils.escapeHtml(ct.title || '')}</span>
+                  <span class="text-slate-500">(${Utils.escapeHtml(ct.site || '-')})</span>
+                </div>
+                <span class="text-emerald-700 font-semibold">เสร็จ 100%</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      ` : '';
+
       body.innerHTML = `
         <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <div class="font-semibold">📦 ${Utils.escapeHtml(data.fileName)}</div>
           <button id="download-backup-json-btn" class="btn btn-outline btn-sm">📥 ดาวน์โหลดไฟล์เก็บไว้ (.json)</button>
         </div>
-        <div class="overflow-x-auto">
-          <table class="tape-table">
-            <thead>
-              <tr>
-                <th style="width:36px"><input type="checkbox" id="backup-select-all"></th>
-                <th>วันที่</th><th>ไซต์งาน</th><th>รายละเอียด</th><th>จำนวนคน</th><th>รวมจ่าย</th><th>ผู้สั่งงาน</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <div class="flex items-center justify-between mt-3 gap-2 flex-wrap">
+        ${logs.length > 0 ? `
+          <div class="text-xs font-semibold text-slate-600 mb-1.5">📝 รายการบันทึกประจำวันในงวดนี้ (${logs.length} ใบงาน):</div>
+          <div class="overflow-x-auto max-h-64">
+            <table class="tape-table">
+              <thead>
+                <tr>
+                  <th style="width:36px"><input type="checkbox" id="backup-select-all"></th>
+                  <th>วันที่</th><th>ไซต์งาน</th><th>รายละเอียด</th><th>จำนวนคน</th><th>รวมจ่าย</th><th>ผู้สั่งงาน</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        ` : `<div class="text-xs text-slate-400 py-2">ไม่มีรายการบันทึกประจำวันในงวดนี้</div>`}
+        ${tasksHtml}
+        <div class="flex items-center justify-between mt-4 gap-2 flex-wrap">
           <button id="back-to-list-btn" class="btn btn-outline btn-sm">← กลับไปเลือกรายการอื่น</button>
-          <button id="restore-selected-btn" class="btn btn-primary btn-sm">↩️ นำใบงานที่เลือกกลับเข้าระบบ</button>
+          <button id="restore-selected-btn" class="btn btn-primary btn-sm">↩️ นำรายการที่เลือกกลับเข้าระบบ</button>
         </div>
       `;
       document.getElementById('back-to-list-btn').addEventListener('click', loadBackupList);
@@ -181,31 +334,37 @@
       });
 
       const selectAll = document.getElementById('backup-select-all');
-      selectAll.addEventListener('change', () => {
-        body.querySelectorAll('.backup-group-checkbox').forEach(cb => cb.checked = selectAll.checked);
-      });
+      if (selectAll) {
+        selectAll.addEventListener('change', () => {
+          body.querySelectorAll('.backup-group-checkbox').forEach(cb => cb.checked = selectAll.checked);
+        });
+      }
 
       const restoreBtn = document.getElementById('restore-selected-btn');
       restoreBtn.addEventListener('click', async () => {
-        const checked = body.querySelectorAll('.backup-group-checkbox:checked');
-        const groupIds = Array.from(checked).map(cb => cb.value);
-        if (!groupIds.length) {
-          Utils.toast('กรุณาเลือกใบงานที่ต้องการนำกลับก่อน', 'error');
+        const checkedGroups = body.querySelectorAll('.backup-group-checkbox:checked');
+        const checkedTasks = body.querySelectorAll('.backup-task-checkbox:checked');
+        const groupIds = Array.from(checkedGroups).map(cb => cb.value);
+        const taskIds = Array.from(checkedTasks).map(cb => cb.value);
+
+        if (!groupIds.length && !taskIds.length) {
+          Utils.toast('กรุณาเลือกใบงานหรือใบสั่งงานที่ต้องการนำกลับก่อน', 'error');
           return;
         }
-        if (!confirm(`นำใบงาน ${groupIds.length} รายการที่เลือกกลับเข้าระบบปัจจุบันหรือไม่?`)) return;
+        if (!confirm(`นำรายการที่เลือกกลับเข้าระบบปัจจุบันหรือไม่?`)) return;
 
         try {
           const result = await Utils.animateProgress(
             restoreBtn,
-            Api.restoreBackupGroups({ fileId, groupIds }),
+            Api.restoreBackupGroups({ fileId, groupIds, taskIds }),
             'กำลังนำเข้า...',
             '✅ นำเข้าสำเร็จ'
           );
           const restoredCount = (result.restored || []).length;
+          const restoredTasksCount = (result.restoredTasks || []).length;
           const skippedCount = (result.skipped || []).length;
-          let msg = `นำเข้าสำเร็จ ${restoredCount} รายการ`;
-          if (skippedCount) msg += ` (ข้าม ${skippedCount} รายการเพราะมีอยู่แล้วในระบบ)`;
+          let msg = `นำเข้าสำเร็จ (รายวัน ${restoredCount} ใบ, ใบสั่งงาน ${restoredTasksCount} ใบ)`;
+          if (skippedCount) msg += ` [ข้าม ${skippedCount} รายการที่มีอยู่แล้ว]`;
           Utils.toast(msg, 'success');
           closeModal();
           load();
@@ -308,6 +467,7 @@
             </div>` : ''}
             <button id="view-selected-btn" class="btn btn-outline btn-sm">📋 ดูรายการ / พิมพ์</button>
             <a href="daily-log.html" class="btn btn-amber btn-sm">+ บันทึกงานใหม่</a>
+            <button id="cutoff-period-btn" class="btn btn-primary btn-sm" title="ตัดจ่ายค่าแรงตามช่วงวันที่ (ประมาณ 15 วัน) เก็บ Backup งวดงาน และล้างเฉพาะวันที่จ่ายแล้ว">💰 ตัดงวดค่าแรง</button>
             <button id="backup-btn" class="btn btn-outline btn-sm">💾 Backup ไฟล์</button>
             <button id="load-backup-btn" class="btn btn-outline btn-sm">📂 โหลด Backup</button>
             <button id="clear-logs-btn" class="btn btn-danger btn-sm">🗑️ ล้างบันทึก</button>
@@ -387,6 +547,14 @@
         }
         sessionStorage.setItem('printGroups', JSON.stringify(ids));
         window.open('summary-print.html', '_blank');
+      });
+    }
+
+    const cutoffPeriodBtn = document.getElementById('cutoff-period-btn');
+    if (cutoffPeriodBtn) {
+      cutoffPeriodBtn.addEventListener('click', () => {
+        if (!Utils.verifyPin()) return;
+        openCutoffPeriodModal(sortedRecentGroups);
       });
     }
 

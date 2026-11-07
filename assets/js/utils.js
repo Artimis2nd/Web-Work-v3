@@ -171,9 +171,19 @@ const Utils = (() => {
       case 'เสร็จสมบูรณ์':
       case 'เสร็จ':
         return '<span class="badge badge-success">เสร็จสมบูรณ์</span>';
+      case 'Cancelled':
+      case 'ยกเลิก':
+        return '<span class="badge badge-muted">ยกเลิก</span>';
       default:
         return `<span class="badge">${escapeHtml(s || '-')}</span>`;
     }
+  }
+
+  function formatFileSize(bytes) {
+    const b = Number(bytes) || 0;
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+    return `${(b / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   function renderProgressBar(percent, options = {}) {
@@ -226,6 +236,7 @@ const Utils = (() => {
         .badge-info { background-color: #E0F2FE; color: #0369A1; border: 1px solid #BAE6FD; }
         .badge-danger { background-color: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; }
         .badge-success { background-color: #DCFCE7; color: #15803D; border: 1px solid #BBF7D0; }
+        .badge-muted { background-color: #F1F5F9; color: #64748B; border: 1px solid #CBD5E1; text-decoration: line-through; }
       `;
       if (document.head) {
         document.head.appendChild(styleEl);
@@ -465,6 +476,7 @@ const Utils = (() => {
     renderSidebar,
     renderTaskStatusBadge,
     renderProgressBar,
+    formatFileSize,
     compressImage,
     animateProgress,
     openDbSettingsModal,

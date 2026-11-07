@@ -704,9 +704,271 @@ const Api = (() => {
   }
 
   // ============================================================
+  // ระบบจัดเก็บไฟล์สื่อ (รูปภาพ & วิดีโอสั้น) สำหรับใบสั่งงานด้วย IndexedDB
+  // รองรับโหมด Local ไฟล์ขนาดใหญ่ (จำกัดสูงสุด 50 MB ต่อไฟล์)
+  // ============================================================
+  const MAX_MEDIA_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+  const IDB_NAME = 'WAGE_MEDIA_DB';
+  const IDB_VERSION = 1;
+  const IDB_STORE = 'task_media';
+  const memoryMediaStore = {}; // Fallback สำหรับสภาพแวดล้อมที่ไม่มี IndexedDB (เช่น Node.js Test)
+
+  function openMediaDb() {
+    return new Promise((resolve, reject) => {
+      const idb = (typeof window !== 'undefined' && window.indexedDB) || (typeof indexedDB !== 'undefined' ? indexedDB : null);
+      if (!idb) {
+        resolve(null);
+        return;
+      }
+      try {
+        const req = idb.open(IDB_NAME, IDB_VERSION);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) {
+            const store = db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+            store.createIndex('task_id', 'task_id', { unique: false });
+          }
+        };
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  async function saveTaskMedia(taskId, fileOrData, meta = {}) {
+    let size = Number(meta.size) || 0;
+    let name = meta.name || 'ไฟล์แนบ';
+    let type = meta.type || 'application/octet-stream';
+    let dataPayload = fileOrData;
+
+    if (fileOrData && typeof fileOrData === 'object') {
+      if (typeof fileOrData.size === 'number') size = fileOrData.size;
+      if (fileOrData.name) name = fileOrData.name;
+      if (fileOrData.type) type = fileOrData.type;
+    } else if (typeof fileOrData === 'string') {
+      size = size || Math.round((fileOrData.length * 3) / 4);
+      const m = fileOrData.match(/^data:([^;]+);/);
+      if (m) type = m[1];
+    }
+
+    if (size > MAX_MEDIA_SIZE_BYTES) {
+      throw new Error('ขนาดไฟล์เกินกำหนด (สูงสุดไม่เกิน 50 MB ต่อไฟล์)');
+    }
+
+    const mediaKind = type.startsWith('video/') ? 'video' : 'image';
+    const mediaId = meta.id || ('med_' + generateUuid());
+    const now = new Date().toISOString();
+
+    const record = {
+      id: mediaId,
+      task_id: taskId != null ? Number(taskId) : null,
+      name,
+      type,
+      media_kind: mediaKind,
+      size,
+      data: dataPayload,
+      created_at: now
+    };
+
+    const db = await openMediaDb();
+    if (db) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        store.put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(new Error('ไม่สามารถบันทึกไฟล์ลง IndexedDB ได้'));
+      });
+    } else {
+      memoryMediaStore[mediaId] = record;
+    }
+
+    return {
+      id: record.id,
+      task_id: record.task_id,
+      name: record.name,
+      type: record.type,
+      media_kind: record.media_kind,
+      size: record.size,
+      created_at: record.created_at
+    };
+  }
+
+  async function getTaskMedia(mediaId) {
+    if (!mediaId) return null;
+    const db = await openMediaDb();
+    if (db) {
+      return new Promise((resolve) => {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.get(mediaId);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    }
+    return memoryMediaStore[mediaId] || null;
+  }
+
+  async function listTaskMedia(taskId) {
+    if (taskId == null) return [];
+    const numId = Number(taskId);
+    const db = await openMediaDb();
+    if (db) {
+      return new Promise((resolve) => {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const all = req.result || [];
+          resolve(all.filter(r => Number(r.task_id) === numId).map(r => ({
+            id: r.id,
+            task_id: r.task_id,
+            name: r.name,
+            type: r.type,
+            media_kind: r.media_kind,
+            size: r.size,
+            created_at: r.created_at
+          })));
+        };
+        req.onerror = () => resolve([]);
+      });
+    }
+    return Object.values(memoryMediaStore)
+      .filter(r => Number(r.task_id) === numId)
+      .map(r => ({
+        id: r.id,
+        task_id: r.task_id,
+        name: r.name,
+        type: r.type,
+        media_kind: r.media_kind,
+        size: r.size,
+        created_at: r.created_at
+      }));
+  }
+
+  async function deleteTaskMedia(mediaId) {
+    if (!mediaId) return { deleted: false };
+    const db = await openMediaDb();
+    if (db) {
+      await new Promise((resolve) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        store.delete(mediaId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } else {
+      delete memoryMediaStore[mediaId];
+    }
+    return { deleted: true };
+  }
+
+  // ============================================================
   // ใบสั่งงาน / งานโครงการ (TASKS / JOB ORDERS & TASK COSTING)
   // ============================================================
-  function mapTaskRowFromDb(r) {
+  function normalizeSubItems(rawItems) {
+    let items = rawItems;
+    if (typeof items === 'string') {
+      try { items = JSON.parse(items); } catch (_) { items = []; }
+    }
+    if (!Array.isArray(items)) return [];
+
+    return items
+      .filter(it => it && typeof it === 'object' && String(it.name || '').trim() !== '')
+      .map((it, idx) => {
+        const hasTarget = it.target_qty !== null && it.target_qty !== '' && it.target_qty !== undefined && Number(it.target_qty) > 0;
+        const targetQty = hasTarget ? Math.round(Number(it.target_qty) * 100) / 100 : null;
+        const actualQty = Math.max(0, Math.round((Number(it.actual_qty) || 0) * 100) / 100);
+        let status = it.status || 'Pending';
+        const validStatuses = ['Pending', 'In Progress', 'Completed', 'Blocked', 'Cancelled'];
+        if (!validStatuses.includes(status)) status = 'Pending';
+
+        let pct = Math.max(0, Math.min(100, Math.round(Number(it.progress_percent) || 0)));
+        if (status === 'Completed') {
+          pct = 100;
+        } else if (status === 'Cancelled') {
+          pct = 0;
+        } else if (targetQty && targetQty > 0) {
+          pct = Math.min(100, Math.round((actualQty / targetQty) * 100));
+          if (pct >= 100 && status !== 'Blocked') {
+            status = 'Completed';
+          } else if (actualQty > 0 && status === 'Pending') {
+            status = 'In Progress';
+          }
+        } else {
+          // งานที่ไม่ได้กำหนดปริมาณเป้าหมายตั้งแต่ต้น (เก็บยอดทำจริงสะสมหน้างาน)
+          if (actualQty > 0 && status === 'Pending') {
+            status = 'In Progress';
+          }
+        }
+
+        return {
+          id: it.id ? String(it.id) : `sub_${idx + 1}`,
+          name: String(it.name || '').trim(),
+          target_qty: targetQty,
+          unit: String(it.unit || '').trim(),
+          actual_qty: actualQty,
+          progress_percent: pct,
+          status,
+          issue_note: String(it.issue_note || '').trim(),
+          added_from_log: Boolean(it.added_from_log)
+        };
+      });
+  }
+
+  function calculateTaskSummaryFromSubItems(subItems, fallbackStatus = 'Pending', fallbackPercent = 0, fallbackIssues = '') {
+    const normalized = normalizeSubItems(subItems);
+    if (!normalized.length) {
+      return {
+        sub_items: [],
+        status: fallbackStatus || 'Pending',
+        progress_percent: Number(fallbackPercent) || 0,
+        issues: fallbackIssues || ''
+      };
+    }
+
+    const activeItems = normalized.filter(it => it.status !== 'Cancelled');
+    if (!activeItems.length) {
+      return {
+        sub_items: normalized,
+        status: 'Pending',
+        progress_percent: 0,
+        issues: fallbackIssues || ''
+      };
+    }
+
+    const sumPct = activeItems.reduce((acc, it) => acc + (Number(it.progress_percent) || 0), 0);
+    let overallPct = Math.max(0, Math.min(100, Math.round(sumPct / activeItems.length)));
+
+    const blockedItems = activeItems.filter(it => it.status === 'Blocked' || (it.issue_note && it.issue_note.trim() !== ''));
+    const allCompleted = activeItems.every(it => it.status === 'Completed');
+    const anyStarted = activeItems.some(it => it.status === 'In Progress' || it.status === 'Completed' || it.actual_qty > 0 || it.progress_percent > 0);
+
+    let overallStatus = 'Pending';
+    if (blockedItems.length > 0) {
+      overallStatus = 'Blocked';
+    } else if (allCompleted) {
+      overallStatus = 'Completed';
+      overallPct = 100;
+    } else if (anyStarted || overallPct > 0) {
+      overallStatus = 'In Progress';
+    }
+
+    const itemIssues = blockedItems
+      .map(it => it.issue_note ? `${it.name}: ${it.issue_note}` : `${it.name}: ติดปัญหา`)
+      .join(' | ');
+
+    return {
+      sub_items: normalized,
+      status: overallStatus,
+      progress_percent: overallPct,
+      issues: itemIssues || fallbackIssues || ''
+    };
+  }
+
+  function mapTaskRowFromDb(r, allLogsCache = null) {
     if (!r) return null;
     let history = r.progress_history;
     if (typeof history === 'string') {
@@ -717,6 +979,25 @@ const Api = (() => {
       }
     }
     if (!Array.isArray(history)) history = [];
+
+    let attachments = r.attachments;
+    if (typeof attachments === 'string') {
+      try { attachments = JSON.parse(attachments); } catch (_) { attachments = []; }
+    }
+    if (!Array.isArray(attachments)) attachments = [];
+
+    const subItems = normalizeSubItems(r.sub_items);
+    const accumDays = Number(r.accumulated_days) || 0;
+
+    let currentDaysWorked = Number(r.current_days_worked) || 0;
+    let workedDates = Array.isArray(r.worked_dates) ? r.worked_dates : [];
+
+    if (Array.isArray(allLogsCache)) {
+      const taskLogs = allLogsCache.filter(l => String(l.task_id ?? l.TaskId) === String(r.id));
+      const uniqueDates = Array.from(new Set(taskLogs.map(l => l.work_date || l.Date).filter(Boolean))).sort();
+      currentDaysWorked = uniqueDates.length;
+      workedDates = uniqueDates;
+    }
 
     return {
       id: Number(r.id),
@@ -734,12 +1015,17 @@ const Api = (() => {
       issues: r.issues || '',
       resolution: r.resolution || '',
       completion_summary: r.completion_summary || '',
+      sub_items: subItems,
+      attachments,
       progress_history: history,
       accumulated_cost: Number(r.accumulated_cost) || 0,
       accumulated_markup_cost: Number(r.accumulated_markup_cost) || 0,
       accumulated_hours: Number(r.accumulated_hours) || 0,
       accumulated_man_days: Number(r.accumulated_man_days) || 0,
-      accumulated_days: Number(r.accumulated_days) || 0,
+      accumulated_days: accumDays,
+      current_days_worked: currentDaysWorked,
+      total_days_worked: accumDays + currentDaysWorked,
+      worked_dates: workedDates,
       created_at: r.created_at,
       updated_at: r.updated_at
     };
@@ -780,6 +1066,16 @@ const Api = (() => {
     const orderDate = taskData.order_date || now.slice(0, 10);
     const taskCode = taskData.task_code || (await generateNextTaskCode(orderDate));
 
+    const hasSubItems = Array.isArray(taskData.sub_items) && taskData.sub_items.length > 0;
+    const calc = hasSubItems
+      ? calculateTaskSummaryFromSubItems(taskData.sub_items, taskData.status || 'Pending', taskData.progress_percent || 0, taskData.issues || '')
+      : {
+          sub_items: [],
+          status: taskData.status || 'Pending',
+          progress_percent: Number(taskData.progress_percent) || 0,
+          issues: taskData.issues || ''
+        };
+
     const taskPayload = {
       task_code: taskCode,
       title: taskData.title || '',
@@ -789,12 +1085,14 @@ const Api = (() => {
       ordered_by: taskData.ordered_by || '',
       order_date: orderDate,
       due_date: taskData.due_date || null,
-      status: taskData.status || 'Pending',
-      progress_percent: Number(taskData.progress_percent) || 0,
+      status: calc.status,
+      progress_percent: calc.progress_percent,
       description: taskData.description || '',
-      issues: taskData.issues || '',
+      issues: calc.issues,
       resolution: taskData.resolution || '',
       completion_summary: taskData.completion_summary || '',
+      sub_items: calc.sub_items,
+      attachments: Array.isArray(taskData.attachments) ? taskData.attachments : [],
       progress_history: Array.isArray(taskData.progress_history) ? taskData.progress_history : [],
       accumulated_cost: Number(taskData.accumulated_cost) || 0,
       accumulated_markup_cost: Number(taskData.accumulated_markup_cost) || 0,
@@ -806,12 +1104,15 @@ const Api = (() => {
     };
 
     if (isCloudConfigured()) {
+      const cloudPayload = { ...taskPayload };
+      delete cloudPayload.sub_items;
+      delete cloudPayload.attachments;
       const rows = await sbFetch('/rest/v1/tasks', {
         method: 'POST',
         headers: { 'Prefer': 'return=representation' },
-        body: JSON.stringify(taskPayload)
+        body: JSON.stringify(cloudPayload)
       });
-      return mapTaskRowFromDb(rows?.[0]);
+      return mapTaskRowFromDb({ ...(rows?.[0] || {}), sub_items: taskPayload.sub_items, attachments: taskPayload.attachments });
     }
 
     const tasks = readLocal(LOCAL_KEYS.TASKS, []);
@@ -822,11 +1123,13 @@ const Api = (() => {
     };
     tasks.push(newTask);
     writeLocal(LOCAL_KEYS.TASKS, tasks);
-    return mapTaskRowFromDb(newTask);
+    return mapTaskRowFromDb(newTask, readLocal(LOCAL_KEYS.LOGS, []));
   }
 
   async function getTasks(filter = {}) {
     let taskList = [];
+    const allLogs = await fetchAllLogRows().catch(() => []);
+
     if (isCloudConfigured()) {
       let query = '/rest/v1/tasks?select=*&order=created_at.desc,order_date.desc';
       if (filter.site) query += `&site=eq.${encodeURIComponent(filter.site)}`;
@@ -840,9 +1143,9 @@ const Api = (() => {
         query += '&status=neq.Completed';
       }
       const rows = await sbFetch(query);
-      taskList = (rows || []).map(mapTaskRowFromDb);
+      taskList = (rows || []).map(r => mapTaskRowFromDb(r, allLogs));
     } else {
-      taskList = readLocal(LOCAL_KEYS.TASKS, []).map(mapTaskRowFromDb);
+      taskList = readLocal(LOCAL_KEYS.TASKS, []).map(r => mapTaskRowFromDb(r, allLogs));
       if (filter.site) {
         taskList = taskList.filter(t => t.site === filter.site);
       }
@@ -875,14 +1178,15 @@ const Api = (() => {
 
   async function getTaskById(id) {
     if (id == null) return null;
+    const allLogs = await fetchAllLogRows().catch(() => []);
     if (isCloudConfigured()) {
       const rows = await sbFetch(`/rest/v1/tasks?select=*&id=eq.${encodeURIComponent(id)}`);
       if (!rows || !rows.length) return null;
-      return mapTaskRowFromDb(rows[0]);
+      return mapTaskRowFromDb(rows[0], allLogs);
     }
     const tasks = readLocal(LOCAL_KEYS.TASKS, []);
     const found = tasks.find(t => String(t.id) === String(id));
-    return found ? mapTaskRowFromDb(found) : null;
+    return found ? mapTaskRowFromDb(found, allLogs) : null;
   }
 
   async function updateTask(id, taskData = {}) {
@@ -894,14 +1198,40 @@ const Api = (() => {
     };
     delete updatePayload.id;
 
+    // หากมีการส่ง sub_items มาอัปเดต และไม่ได้บังคับปิดงาน (Completed) ให้คำนวณสรุปจากรายการย่อยอัตโนมัติ
+    if (Array.isArray(updatePayload.sub_items)) {
+      if (updatePayload.status === 'Completed') {
+        updatePayload.sub_items = normalizeSubItems(updatePayload.sub_items).map(it =>
+          it.status === 'Cancelled' ? it : { ...it, status: 'Completed', progress_percent: 100 }
+        );
+        updatePayload.progress_percent = 100;
+      } else {
+        const calc = calculateTaskSummaryFromSubItems(
+          updatePayload.sub_items,
+          updatePayload.status,
+          updatePayload.progress_percent,
+          updatePayload.issues
+        );
+        updatePayload.sub_items = calc.sub_items;
+        if (taskData.status === undefined) updatePayload.status = calc.status;
+        if (taskData.progress_percent === undefined) updatePayload.progress_percent = calc.progress_percent;
+        if (taskData.issues === undefined) updatePayload.issues = calc.issues;
+      }
+    }
+
+    const allLogs = await fetchAllLogRows().catch(() => []);
+
     if (isCloudConfigured()) {
+      const cloudPayload = { ...updatePayload };
+      delete cloudPayload.sub_items;
+      delete cloudPayload.attachments;
       const rows = await sbFetch(`/rest/v1/tasks?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Prefer': 'return=representation' },
-        body: JSON.stringify(updatePayload)
+        body: JSON.stringify(cloudPayload)
       });
       if (!rows || !rows.length) throw new Error('ไม่พบใบสั่งงาน ID: ' + id);
-      return mapTaskRowFromDb(rows[0]);
+      return mapTaskRowFromDb({ ...rows[0], sub_items: updatePayload.sub_items, attachments: updatePayload.attachments }, allLogs);
     }
 
     const tasks = readLocal(LOCAL_KEYS.TASKS, []);
@@ -914,11 +1244,20 @@ const Api = (() => {
     };
     tasks[idx] = updated;
     writeLocal(LOCAL_KEYS.TASKS, tasks);
-    return mapTaskRowFromDb(updated);
+    return mapTaskRowFromDb(updated, allLogs);
   }
 
   async function deleteTask(id) {
     if (id == null) throw new Error('ต้องระบุ id ของใบสั่งงาน');
+
+    // ลบไฟล์สื่อใน IndexedDB ที่ผูกกับใบสั่งงานนี้
+    try {
+      const mediaList = await listTaskMedia(id);
+      for (const m of mediaList) {
+        await deleteTaskMedia(m.id);
+      }
+    } catch (_) {}
+
     if (isCloudConfigured()) {
       await sbFetch(`/rest/v1/daily_logs?task_id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH',
@@ -952,33 +1291,119 @@ const Api = (() => {
     if (!task) throw new Error('ไม่พบใบสั่งงาน ID: ' + id);
 
     const now = new Date().toISOString();
-    const percentNum = Number(progressInfo.percent);
     const dateStr = progressInfo.date || now.slice(0, 10);
-    const issues = progressInfo.issues !== undefined ? String(progressInfo.issues) : '';
     const resolution = progressInfo.resolution !== undefined ? String(progressInfo.resolution) : '';
     const by = progressInfo.by !== undefined ? String(progressInfo.by) : '';
+
+    let currentSubItems = Array.isArray(task.sub_items) ? [...task.sub_items] : [];
+    const subItemChangesSummary = [];
+
+    // 1. อัปเดตยอดทำจริง/สถานะ/เป้าหมาย ของรายการงานย่อยเดิม (จากหน้าบันทึกรายวัน)
+    if (Array.isArray(progressInfo.sub_items_updates) && progressInfo.sub_items_updates.length > 0) {
+      currentSubItems = currentSubItems.map(item => {
+        const upd = progressInfo.sub_items_updates.find(u => String(u.id) === String(item.id) || (u.name && u.name === item.name));
+        if (!upd) return item;
+
+        const nextItem = { ...item };
+        if (upd.target_qty !== undefined) {
+          nextItem.target_qty = (upd.target_qty !== null && upd.target_qty !== '' && Number(upd.target_qty) > 0)
+            ? Number(upd.target_qty)
+            : null;
+        }
+        if (upd.added_qty !== undefined && Number(upd.added_qty) > 0) {
+          nextItem.actual_qty = Math.round(((Number(nextItem.actual_qty) || 0) + Number(upd.added_qty)) * 100) / 100;
+        } else if (upd.actual_qty !== undefined) {
+          nextItem.actual_qty = Math.max(0, Math.round(Number(upd.actual_qty) * 100) / 100);
+        }
+        if (upd.status) {
+          nextItem.status = upd.status;
+        }
+        if (upd.progress_percent !== undefined) {
+          nextItem.progress_percent = Number(upd.progress_percent) || 0;
+        }
+        if (upd.issue_note !== undefined) {
+          nextItem.issue_note = String(upd.issue_note || '').trim();
+        }
+
+        subItemChangesSummary.push({
+          id: nextItem.id,
+          name: nextItem.name,
+          added_qty: Number(upd.added_qty) || 0,
+          actual_qty: nextItem.actual_qty,
+          target_qty: nextItem.target_qty,
+          unit: nextItem.unit,
+          status: nextItem.status,
+          issue_note: nextItem.issue_note
+        });
+
+        return nextItem;
+      });
+    }
+
+    // 2. เพิ่มรายการงานย่อยใหม่ที่งอกหน้างาน (จากหน้าบันทึกรายวัน)
+    if (Array.isArray(progressInfo.new_sub_items) && progressInfo.new_sub_items.length > 0) {
+      progressInfo.new_sub_items.forEach((newIt, idx) => {
+        if (!newIt || !String(newIt.name || '').trim()) return;
+        const addedItem = {
+          id: newIt.id || `sub_${Date.now()}_${idx + 1}`,
+          name: String(newIt.name).trim(),
+          target_qty: (newIt.target_qty !== null && newIt.target_qty !== '' && Number(newIt.target_qty) > 0) ? Number(newIt.target_qty) : null,
+          unit: String(newIt.unit || '').trim(),
+          actual_qty: Math.max(0, Number(newIt.actual_qty ?? newIt.added_qty) || 0),
+          progress_percent: Number(newIt.progress_percent) || 0,
+          status: newIt.status || 'In Progress',
+          issue_note: String(newIt.issue_note || '').trim(),
+          added_from_log: true
+        };
+        currentSubItems.push(addedItem);
+        subItemChangesSummary.push({
+          id: addedItem.id,
+          name: addedItem.name,
+          added_qty: addedItem.actual_qty,
+          actual_qty: addedItem.actual_qty,
+          target_qty: addedItem.target_qty,
+          unit: addedItem.unit,
+          status: addedItem.status,
+          issue_note: addedItem.issue_note,
+          added_from_log: true
+        });
+      });
+    }
+
+    let percentNum = progressInfo.percent !== undefined ? Number(progressInfo.percent) : Number(task.progress_percent) || 0;
+    let status = task.status;
+    let issues = progressInfo.issues !== undefined ? String(progressInfo.issues) : task.issues;
+
+    if (currentSubItems.length > 0 && (Array.isArray(progressInfo.sub_items_updates) || Array.isArray(progressInfo.new_sub_items))) {
+      const calc = calculateTaskSummaryFromSubItems(currentSubItems, status, percentNum, progressInfo.issues !== undefined ? String(progressInfo.issues) : '');
+      currentSubItems = calc.sub_items;
+      status = calc.status;
+      percentNum = progressInfo.percent !== undefined ? Number(progressInfo.percent) : calc.progress_percent;
+      issues = calc.issues;
+    } else {
+      if (status === 'Pending' && percentNum > 0) {
+        status = 'In Progress';
+      }
+    }
 
     const newHistoryEntry = {
       date: dateStr,
       percent: percentNum,
-      issues,
+      issues: progressInfo.issues !== undefined ? String(progressInfo.issues) : issues,
       resolution,
       by,
+      sub_items_snapshot: subItemChangesSummary.length > 0 ? subItemChangesSummary : undefined,
       created_at: now
     };
 
     const history = Array.isArray(task.progress_history) ? [...task.progress_history] : [];
     history.push(newHistoryEntry);
 
-    let status = task.status;
-    if (status === 'Pending' && percentNum > 0) {
-      status = 'In Progress';
-    }
-
     const updates = {
+      sub_items: currentSubItems,
       progress_history: history,
       progress_percent: percentNum,
-      issues: progressInfo.issues !== undefined ? issues : task.issues,
+      issues,
       resolution: progressInfo.resolution !== undefined ? resolution : task.resolution,
       status
     };
@@ -1122,14 +1547,27 @@ const Api = (() => {
     };
   }
 
-  async function snapshotActiveTasksBeforeClear() {
+  function isDateInRange(dateStr, startDate, endDate) {
+    if (!dateStr) return false;
+    const d = String(dateStr).slice(0, 10);
+    if (startDate && d < String(startDate).slice(0, 10)) return false;
+    if (endDate && d > String(endDate).slice(0, 10)) return false;
+    return true;
+  }
+
+  async function snapshotActiveTasksBeforeClear(dateFilter = {}) {
     const activeTasks = await getTasks({ excludeCompleted: true });
     const allLogs = await fetchAllLogRows();
     const cfg = getConfig();
+    const { startDate, endDate } = dateFilter || {};
+
+    const filteredLogs = (startDate || endDate)
+      ? allLogs.filter(l => isDateInRange(l.work_date || l.Date, startDate, endDate))
+      : allLogs;
 
     let updatedCount = 0;
     for (const task of activeTasks) {
-      const taskLogs = allLogs.filter(l => String(l.task_id ?? l.TaskId) === String(task.id));
+      const taskLogs = filteredLogs.filter(l => String(l.task_id ?? l.TaskId) === String(task.id));
       if (!taskLogs.length) continue;
 
       const uniqueDates = new Set(taskLogs.map(l => l.work_date || l.Date).filter(Boolean));
@@ -1173,10 +1611,147 @@ const Api = (() => {
   }
 
   // ============================================================
-  // ระบบสำรองข้อมูล "เบิกงวด" และกู้คืนใบงาน (Backups)
+  // ระบบสำรองข้อมูล "เบิกงวด / ตัดงวดค่าแรง (~15 วัน)" และกู้คืนใบงาน (Backups)
   // ============================================================
+  async function closePayrollPeriod(options = {}) {
+    const { startDate = null, endDate = null, customName = '', archiveCompletedTasks = true } = options;
+    const allLogs = await fetchAllLogRows();
+
+    const targetLogs = (startDate || endDate)
+      ? allLogs.filter(l => isDateInRange(l.work_date || l.Date, startDate, endDate))
+      : allLogs;
+
+    const remainingLogs = (startDate || endDate)
+      ? allLogs.filter(l => !isDateInRange(l.work_date || l.Date, startDate, endDate))
+      : [];
+
+    // 1. บันทึกยอดสะสมของใบสั่งงานที่ยังไม่เสร็จในช่วงวันที่ตัดจ่าย
+    const snapRes = await snapshotActiveTasksBeforeClear({ startDate, endDate });
+
+    // 2. รวบรวมใบสั่งงานที่เสร็จสมบูรณ์แล้ว (Completed) เพื่อเก็บเข้าชุด Backup ของงวดนี้
+    const allTasksNow = await getTasks();
+    const completedTasks = archiveCompletedTasks
+      ? allTasksNow.filter(t => t.status === 'Completed')
+      : [];
+    const activeTasksSnapshot = allTasksNow.filter(t => t.status !== 'Completed');
+
+    // 3. ตั้งชื่องวด Backup
+    let fileName = customName ? String(customName).trim() : '';
+    if (!fileName) {
+      if (startDate && endDate) {
+        fileName = `งวดค่าแรง ${startDate} ถึง ${endDate}`;
+      } else if (startDate) {
+        fileName = `งวดค่าแรงตั้งแต่ ${startDate}`;
+      } else if (endDate) {
+        fileName = `งวดค่าแรงถึง ${endDate}`;
+      } else {
+        fileName = `เบิกงวด ${formatBackupDate()}`;
+      }
+    }
+
+    const targetGroupIds = new Set(targetLogs.map(l => String(l.GroupID || l.group_id)).filter(Boolean));
+    let allImages = {};
+    const targetImages = {};
+
+    if (isCloudConfigured()) {
+      const imgRows = await sbFetch('/rest/v1/log_images?select=*');
+      (imgRows || []).forEach(r => {
+        allImages[r.group_id] = r.image_urls;
+        if (targetGroupIds.has(String(r.group_id))) {
+          targetImages[r.group_id] = r.image_urls;
+        }
+      });
+
+      const created = await sbFetch('/rest/v1/log_backups', {
+        method: 'POST',
+        headers: { 'Prefer': 'return=representation' },
+        body: JSON.stringify({
+          name: fileName,
+          logs_data: targetLogs,
+          images_data: targetImages
+        })
+      });
+
+      // ลบเฉพาะบันทึกรายวันในช่วงวันที่ตัดจ่าย
+      if (!startDate && !endDate) {
+        await clearAllLogs();
+      } else {
+        for (const gid of targetGroupIds) {
+          await sbFetch(`/rest/v1/daily_logs?group_id=eq.${encodeURIComponent(gid)}`, { method: 'DELETE' }).catch(() => {});
+          await sbFetch(`/rest/v1/log_images?group_id=eq.${encodeURIComponent(gid)}`, { method: 'DELETE' }).catch(() => {});
+        }
+      }
+
+      // ลบใบสั่งงานที่เสร็จสมบูรณ์แล้วออกจากตารางปัจจุบัน (เก็บใน Backup แล้ว)
+      if (archiveCompletedTasks && completedTasks.length > 0) {
+        for (const ct of completedTasks) {
+          await deleteTask(ct.id).catch(() => {});
+        }
+      }
+
+      return {
+        fileId: created?.[0]?.id,
+        fileName,
+        archivedLogsCount: targetLogs.length,
+        archivedGroupsCount: targetGroupIds.size,
+        archivedCompletedTasksCount: completedTasks.length,
+        updatedActiveTasksCount: snapRes.updatedCount
+      };
+    }
+
+    // โหมด Local Storage
+    allImages = readLocal(LOCAL_KEYS.IMAGES, {});
+    targetGroupIds.forEach(gid => {
+      if (allImages[gid]) targetImages[gid] = allImages[gid];
+    });
+
+    const backups = readLocal(LOCAL_KEYS.BACKUPS, []);
+    const newBackup = {
+      id: generateUuid(),
+      name: fileName,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      createdDate: new Date().toISOString(),
+      logsData: targetLogs,
+      imagesData: targetImages,
+      completedTasksData: completedTasks,
+      activeTasksSnapshot
+    };
+    backups.unshift(newBackup);
+    writeLocal(LOCAL_KEYS.BACKUPS, backups);
+
+    // ลบเฉพาะบันทึกรายวันในช่วงวันที่ตัดจ่าย (คงวันที่อยู่นอกช่วงไว้)
+    writeLocal(LOCAL_KEYS.LOGS, remainingLogs);
+    const remainingImages = {};
+    Object.keys(allImages).forEach(gid => {
+      if (!targetGroupIds.has(String(gid))) {
+        remainingImages[gid] = allImages[gid];
+      }
+    });
+    writeLocal(LOCAL_KEYS.IMAGES, remainingImages);
+
+    // ย้ายใบสั่งงานที่เสร็จแล้ว (Completed) ออกจากรายการปัจจุบัน (คงใบงานที่ยังไม่เสร็จไว้ทำต่อในงวดถัดไป)
+    if (archiveCompletedTasks && completedTasks.length > 0) {
+      const completedIdsSet = new Set(completedTasks.map(t => String(t.id)));
+      const rawTasks = readLocal(LOCAL_KEYS.TASKS, []);
+      const keptTasks = rawTasks.filter(t => !completedIdsSet.has(String(t.id)));
+      writeLocal(LOCAL_KEYS.TASKS, keptTasks);
+    }
+
+    return {
+      fileId: newBackup.id,
+      fileName,
+      archivedLogsCount: targetLogs.length,
+      archivedGroupsCount: targetGroupIds.size,
+      archivedCompletedTasksCount: completedTasks.length,
+      updatedActiveTasksCount: snapRes.updatedCount
+    };
+  }
+
   async function backupSpreadsheet() {
     const logs = await fetchAllLogRows();
+    const allTasksNow = await getTasks().catch(() => []);
+    const completedTasks = allTasksNow.filter(t => t.status === 'Completed');
     const fileName = `เบิกงวด ${formatBackupDate()}`;
     let imagesData = {};
 
@@ -1202,7 +1777,8 @@ const Api = (() => {
       name: fileName,
       createdDate: new Date().toISOString(),
       logsData: logs,
-      imagesData
+      imagesData,
+      completedTasksData: completedTasks
     };
     backups.unshift(newBackup);
     writeLocal(LOCAL_KEYS.BACKUPS, backups);
@@ -1230,13 +1806,21 @@ const Api = (() => {
       }));
     }
     const backups = readLocal(LOCAL_KEYS.BACKUPS, []);
-    return backups.map(b => ({ id: b.id, name: b.name, createdDate: b.createdDate }));
+    return backups.map(b => ({
+      id: b.id,
+      name: b.name,
+      startDate: b.startDate || null,
+      endDate: b.endDate || null,
+      createdDate: b.createdDate,
+      completedTasksCount: Array.isArray(b.completedTasksData) ? b.completedTasksData.length : 0
+    }));
   }
 
   async function getBackupData(payload) {
     const fileId = payload.fileId;
     let backupName = '';
     let logs = [];
+    let completedTasks = [];
 
     if (isCloudConfigured()) {
       const rows = await sbFetch(`/rest/v1/log_backups?select=*&id=eq.${encodeURIComponent(fileId)}`);
@@ -1249,6 +1833,7 @@ const Api = (() => {
       if (!found) throw new Error('ไม่พบข้อมูลสำรองนี้');
       backupName = found.name;
       logs = found.logsData || [];
+      completedTasks = Array.isArray(found.completedTasksData) ? found.completedTasksData : [];
     }
 
     const groups = {};
@@ -1270,16 +1855,20 @@ const Api = (() => {
 
     const groupList = Object.values(groups);
     groupList.sort((a, b) => String(b.Date || '').localeCompare(String(a.Date || '')));
-    return { fileName: backupName, logs: groupList };
+    return { fileName: backupName, logs: groupList, completedTasks };
   }
 
   async function restoreBackupGroups(payload) {
     const fileId = payload.fileId;
     const groupIds = payload.groupIds || [];
-    if (!groupIds.length) throw new Error('กรุณาเลือกใบงานที่ต้องการกู้คืนอย่างน้อย 1 รายการ');
+    const taskIds = payload.taskIds || [];
+    if (!groupIds.length && !taskIds.length) {
+      throw new Error('กรุณาเลือกใบงานหรือใบสั่งงานที่ต้องการกู้คืนอย่างน้อย 1 รายการ');
+    }
 
     let backupLogs = [];
     let backupImages = {};
+    let backupCompletedTasks = [];
 
     if (isCloudConfigured()) {
       const rows = await sbFetch(`/rest/v1/log_backups?select=*&id=eq.${encodeURIComponent(fileId)}`);
@@ -1292,6 +1881,7 @@ const Api = (() => {
       if (!found) throw new Error('ไม่พบข้อมูลสำรองนี้');
       backupLogs = found.logsData || [];
       backupImages = found.imagesData || {};
+      backupCompletedTasks = Array.isArray(found.completedTasksData) ? found.completedTasksData : [];
     }
 
     const currentLogs = await fetchAllLogRows();
@@ -1355,7 +1945,22 @@ const Api = (() => {
       }
     }
 
-    return { restored, skipped };
+    // กู้คืนใบสั่งงานที่เสร็จแล้วกลับเข้าหน้าใบสั่งงาน (ถ้าเลือก)
+    const restoredTasks = [];
+    if (!isCloudConfigured() && taskIds.length > 0 && backupCompletedTasks.length > 0) {
+      const liveTasks = readLocal(LOCAL_KEYS.TASKS, []);
+      const existingTaskIds = new Set(liveTasks.map(t => String(t.id)));
+      taskIds.forEach(tid => {
+        const foundTask = backupCompletedTasks.find(t => String(t.id) === String(tid));
+        if (foundTask && !existingTaskIds.has(String(foundTask.id))) {
+          liveTasks.push(foundTask);
+          restoredTasks.push(foundTask.id);
+        }
+      });
+      writeLocal(LOCAL_KEYS.TASKS, liveTasks);
+    }
+
+    return { restored, skipped, restoredTasks };
   }
 
   return {
@@ -1376,6 +1981,7 @@ const Api = (() => {
     getSiteHistory,
     getRequesterHistory,
     backupSpreadsheet,
+    closePayrollPeriod,
     clearAllLogs,
     listBackups,
     getBackupData,
@@ -1388,7 +1994,15 @@ const Api = (() => {
     deleteTask,
     addTaskProgress,
     getTaskCostSummary,
-    snapshotActiveTasksBeforeClear
+    snapshotActiveTasksBeforeClear,
+    normalizeSubItems,
+    calculateTaskSummaryFromSubItems,
+    // Task Media (IndexedDB)
+    saveTaskMedia,
+    getTaskMedia,
+    listTaskMedia,
+    deleteTaskMedia,
+    MAX_MEDIA_SIZE_BYTES
   };
 })();
 
