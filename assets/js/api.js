@@ -43,9 +43,11 @@ const Api = (() => {
     return (hourlyRate * hours) + (hourlyRate * 2 * otHours);
   }
 
-  function calcTotal(rawWage, workerName, wageType) {
+  function calcTotal(rawWage, workerName, wageType, role) {
     const cfg = getConfig();
     if (wageType === 'fixed') return rawWage;
+    // หัวหน้างาน (Supervisor) หรือชื่อที่ระบุยกเว้น (เฟิร์น) จะไม่คิด +20%
+    if (role === 'Supervisor' || role === 'หัวหน้างาน') return rawWage;
     if (workerName && workerName.indexOf(cfg.exemptWorker) !== -1) return rawWage;
     return rawWage * cfg.markupRate;
   }
@@ -145,13 +147,39 @@ const Api = (() => {
   }
 
   function ensureLocalSeed() {
-    const existing = localStorage.getItem(LOCAL_KEYS.WORKERS);
-    if (!existing) {
-      writeLocal(LOCAL_KEYS.WORKERS, [
-        { ID: 1, FullName: 'สมชาย ใจดี', DailyWage: 450, Status: 'Active' },
-        { ID: 2, FullName: 'สมศรี ขยันงาน', DailyWage: 400, Status: 'Active' },
-        { ID: 3, FullName: 'เฟิร์น', DailyWage: 500, Status: 'Active' }
-      ]);
+    const seed = (typeof window !== 'undefined' && window.INITIAL_REAL_DATA) ? window.INITIAL_REAL_DATA : null;
+    const existingWorkers = readLocal(LOCAL_KEYS.WORKERS, null);
+    const existingLogs = readLocal(LOCAL_KEYS.LOGS, null);
+
+    // หากยังไม่มีคนงาน หรือเป็นตัวอย่าง 3 คนเดิม ให้เปลี่ยนเป็นข้อมูลจริง 10 คน
+    const isDefaultSeed = Array.isArray(existingWorkers) && existingWorkers.length === 3 && existingWorkers[0]?.FullName === 'สมชาย ใจดี';
+    if (!existingWorkers || isDefaultSeed) {
+      if (seed && Array.isArray(seed.workers) && seed.workers.length > 0) {
+        writeLocal(LOCAL_KEYS.WORKERS, seed.workers);
+      } else {
+        writeLocal(LOCAL_KEYS.WORKERS, [
+          { ID: 'W1784178589597', FullName: 'สิน', DailyWage: 550, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178619159', FullName: 'เต้ย', DailyWage: 450, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178630869', FullName: 'เฟิร์น', DailyWage: 500, Status: 'Active', Role: 'Supervisor', Gender: 'F', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178640773', FullName: 'ทิง', DailyWage: 400, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178651489', FullName: 'ทน', DailyWage: 550, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178662554', FullName: 'เวิ่ง', DailyWage: 380, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178673827', FullName: 'วิท', DailyWage: 450, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178683969', FullName: 'โอ๊ต', DailyWage: 400, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178692709', FullName: 'ล่อน', DailyWage: 550, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' },
+          { ID: 'W1784178692999', FullName: 'วุฒิ', DailyWage: 450, Status: 'Active', Role: 'Worker', Gender: 'M', BaseAge: 30, RegisteredDate: '2026-10-23' }
+        ]);
+      }
+    }
+
+    // หากยังไม่มีใบงานในเครื่อง ให้โหลดข้อมูลจริง 15 ใบงาน (85 แถวคนงาน) พร้อมรูปภาพเข้าทันที
+    if (!existingLogs || existingLogs.length === 0) {
+      if (seed && Array.isArray(seed.rawLogs) && seed.rawLogs.length > 0) {
+        writeLocal(LOCAL_KEYS.LOGS, seed.rawLogs.map(mapLogRowFromDb));
+        if (seed.imagesData) {
+          writeLocal(LOCAL_KEYS.IMAGES, seed.imagesData);
+        }
+      }
     }
   }
 
@@ -194,21 +222,51 @@ const Api = (() => {
     };
   }
 
+  function calcWorkerCurrentAge(w) {
+    const baseAge = Number(w.BaseAge ?? w.base_age) || 30;
+    const regDateStr = w.RegisteredDate || w.registered_date;
+    if (!regDateStr) return baseAge;
+    const regYear = new Date(regDateStr).getFullYear();
+    const currentYear = new Date().getFullYear();
+    const diff = currentYear - regYear;
+    return baseAge + Math.max(0, diff);
+  }
+
   // ============================================================
   // CORE DATA FETCHERS (WORKERS & LOGS)
   // ============================================================
   async function fetchAllWorkers() {
+    const cfg = getConfig();
     if (isCloudConfigured()) {
       const rows = await sbFetch('/rest/v1/workers?select=*&order=id.asc');
-      return (rows || []).map(r => ({
-        ID: r.id,
-        FullName: r.full_name,
-        DailyWage: Number(r.daily_wage) || 0,
-        Status: r.status || 'Active'
-      }));
+      return (rows || []).map(r => {
+        const item = {
+          ID: r.id,
+          FullName: r.full_name,
+          DailyWage: Number(r.daily_wage) || 0,
+          Status: r.status || 'Active',
+          Role: r.role || (r.full_name && r.full_name.indexOf(cfg.exemptWorker) !== -1 ? 'Supervisor' : 'Worker'),
+          Gender: r.gender || (r.full_name && r.full_name.indexOf('เฟิร์น') !== -1 ? 'F' : 'M'),
+          BaseAge: Number(r.base_age) || 30,
+          RegisteredDate: r.registered_date ? String(r.registered_date).slice(0, 10) : '2026-10-23'
+        };
+        item.CurrentAge = calcWorkerCurrentAge(item);
+        return item;
+      });
     }
     ensureLocalSeed();
-    return readLocal(LOCAL_KEYS.WORKERS, []);
+    const list = readLocal(LOCAL_KEYS.WORKERS, []);
+    return list.map(w => {
+      const item = {
+        ...w,
+        Role: w.Role || (w.FullName && w.FullName.indexOf(cfg.exemptWorker) !== -1 ? 'Supervisor' : 'Worker'),
+        Gender: w.Gender || (w.FullName && w.FullName.indexOf('เฟิร์น') !== -1 ? 'F' : 'M'),
+        BaseAge: Number(w.BaseAge) || 30,
+        RegisteredDate: w.RegisteredDate ? String(w.RegisteredDate).slice(0, 10) : '2026-10-23'
+      };
+      item.CurrentAge = calcWorkerCurrentAge(item);
+      return item;
+    });
   }
 
   async function fetchAllLogRows(filters = {}) {
@@ -230,6 +288,43 @@ const Api = (() => {
     if (filters.groupId) logs = logs.filter(r => String(r.GroupID || r.group_id) === String(filters.groupId));
     if (filters.taskId != null) logs = logs.filter(r => String(r.TaskId ?? r.task_id) === String(filters.taskId));
     return logs;
+  }
+
+  async function getDailyWorkerHoursSummary(dateStr, excludeGroupId = null) {
+    if (!dateStr) return {};
+    const dStr = String(dateStr).slice(0, 10);
+    const rows = await fetchAllLogRows({ startDate: dStr, endDate: dStr });
+    const summary = {};
+    const relevantRows = excludeGroupId
+      ? rows.filter(r => String(r.GroupID || r.group_id) !== String(excludeGroupId))
+      : rows;
+
+    relevantRows.forEach(r => {
+      const name = r.WorkerName || r.worker_name;
+      if (!name) return;
+      if (!summary[name]) {
+        summary[name] = {
+          regularHours: 0,
+          otHours: 0,
+          fixedAmount: 0,
+          entries: []
+        };
+      }
+      const h = Number(r.Hours ?? r.hours) || 0;
+      const ot = Number(r.OTHours ?? r.ot_hours) || 0;
+      const fixed = Number(r.FixedAmount ?? r.fixed_amount) || 0;
+      summary[name].regularHours += h;
+      summary[name].otHours += ot;
+      summary[name].fixedAmount += fixed;
+      summary[name].entries.push({
+        taskId: r.TaskId ?? r.task_id,
+        hours: h,
+        otHours: ot,
+        site: r.Site || r.site,
+        jobDetail: r.JobDetail || r.job_detail
+      });
+    });
+    return summary;
   }
 
   async function fetchImageUrls(groupId) {
@@ -270,6 +365,11 @@ const Api = (() => {
   }
 
   async function addWorker(payload) {
+    const role = payload.role || 'Worker';
+    const gender = payload.gender || 'M';
+    const baseAge = Number(payload.baseAge) || 30;
+    const registeredDate = payload.registeredDate ? String(payload.registeredDate).slice(0, 10) : new Date().toISOString().slice(0, 10);
+
     if (isCloudConfigured()) {
       const rows = await sbFetch('/rest/v1/workers', {
         method: 'POST',
@@ -277,7 +377,11 @@ const Api = (() => {
         body: JSON.stringify({
           full_name: payload.fullName,
           daily_wage: Number(payload.dailyWage) || 0,
-          status: payload.status || 'Active'
+          status: payload.status || 'Active',
+          role,
+          gender,
+          base_age: baseAge,
+          registered_date: registeredDate
         })
       });
       return { id: rows?.[0]?.id };
@@ -285,37 +389,55 @@ const Api = (() => {
     const workers = await fetchAllWorkers();
     const maxId = workers.reduce((m, w) => Math.max(m, Number(w.ID) || 0), 0);
     const newId = maxId + 1;
-    workers.push({
+    const newWorker = {
       ID: newId,
       FullName: payload.fullName,
       DailyWage: Number(payload.dailyWage) || 0,
-      Status: payload.status || 'Active'
-    });
+      Status: payload.status || 'Active',
+      Role: role,
+      Gender: gender,
+      BaseAge: baseAge,
+      RegisteredDate: registeredDate
+    };
+    newWorker.CurrentAge = calcWorkerCurrentAge(newWorker);
+    workers.push(newWorker);
     writeLocal(LOCAL_KEYS.WORKERS, workers);
     return { id: newId };
   }
 
   async function updateWorker(payload) {
     if (isCloudConfigured()) {
+      const body = {
+        full_name: payload.fullName,
+        daily_wage: Number(payload.dailyWage) || 0,
+        status: payload.status || 'Active'
+      };
+      if (payload.role) body.role = payload.role;
+      if (payload.gender) body.gender = payload.gender;
+      if (payload.baseAge != null) body.base_age = Number(payload.baseAge) || 30;
+      if (payload.registeredDate) body.registered_date = String(payload.registeredDate).slice(0, 10);
+
       await sbFetch(`/rest/v1/workers?id=eq.${encodeURIComponent(payload.id)}`, {
         method: 'PATCH',
-        body: JSON.stringify({
-          full_name: payload.fullName,
-          daily_wage: Number(payload.dailyWage) || 0,
-          status: payload.status || 'Active'
-        })
+        body: JSON.stringify(body)
       });
       return { id: payload.id };
     }
     const workers = await fetchAllWorkers();
     const idx = workers.findIndex(w => String(w.ID) === String(payload.id));
     if (idx === -1) throw new Error('ไม่พบคนงาน ID: ' + payload.id);
-    workers[idx] = {
+    const updated = {
       ...workers[idx],
       FullName: payload.fullName,
       DailyWage: Number(payload.dailyWage) || 0,
-      Status: payload.status || 'Active'
+      Status: payload.status || 'Active',
+      Role: payload.role || workers[idx].Role || 'Worker',
+      Gender: payload.gender || workers[idx].Gender || 'M',
+      BaseAge: payload.baseAge != null ? (Number(payload.baseAge) || 30) : (workers[idx].BaseAge || 30),
+      RegisteredDate: payload.registeredDate ? String(payload.registeredDate).slice(0, 10) : (workers[idx].RegisteredDate || '2026-10-23')
     };
+    updated.CurrentAge = calcWorkerCurrentAge(updated);
+    workers[idx] = updated;
     writeLocal(LOCAL_KEYS.WORKERS, workers);
     return { id: payload.id };
   }
@@ -452,7 +574,7 @@ const Api = (() => {
     let totalMarkup = 0;
     const dbRows = workers.map(w => {
       const rawWage = calcWage(w.dailyWage, w.wageType, w.hours, w.otHours, w.fixedAmount);
-      const totalWage = calcTotal(rawWage, w.workerName, w.wageType);
+      const totalWage = calcTotal(rawWage, w.workerName, w.wageType, w.role);
       totalMarkup += totalWage;
       return {
         group_id: groupId,
@@ -576,7 +698,7 @@ const Api = (() => {
     let totalMarkup = 0;
     const dbRows = workers.map(w => {
       const rawWage = calcWage(w.dailyWage, w.wageType, w.hours, w.otHours, w.fixedAmount);
-      const totalWage = calcTotal(rawWage, w.workerName, w.wageType);
+      const totalWage = calcTotal(rawWage, w.workerName, w.wageType, w.role);
       totalMarkup += totalWage;
       return {
         group_id: groupId,
@@ -757,7 +879,9 @@ const Api = (() => {
       throw new Error('ขนาดไฟล์เกินกำหนด (สูงสุดไม่เกิน 50 MB ต่อไฟล์)');
     }
 
-    const mediaKind = type.startsWith('video/') ? 'video' : 'image';
+    const isPdf = type === 'application/pdf' || type.includes('pdf') || String(name).toLowerCase().endsWith('.pdf');
+    const isVideo = type.startsWith('video/') || String(name).toLowerCase().match(/\.(mp4|mov|webm|avi|m4v)$/);
+    const mediaKind = isVideo ? 'video' : (isPdf ? 'pdf' : 'image');
     const mediaId = meta.id || ('med_' + generateUuid());
     const now = new Date().toISOString();
 
@@ -910,7 +1034,9 @@ const Api = (() => {
           target_qty: targetQty,
           unit: String(it.unit || '').trim(),
           actual_qty: actualQty,
+          done_qty: actualQty,
           progress_percent: pct,
+          percent: pct,
           status,
           issue_note: String(it.issue_note || '').trim(),
           added_from_log: Boolean(it.added_from_log)
@@ -1748,16 +1874,42 @@ const Api = (() => {
     };
   }
 
-  async function backupSpreadsheet() {
-    const logs = await fetchAllLogRows();
+  async function backupSpreadsheet(options = {}) {
+    const { startDate = null, endDate = null, customName = '' } = options || {};
+    const allLogs = await fetchAllLogRows();
+    const logs = (startDate || endDate)
+      ? allLogs.filter(l => isDateInRange(l.work_date || l.Date, startDate, endDate))
+      : allLogs;
+
     const allTasksNow = await getTasks().catch(() => []);
     const completedTasks = allTasksNow.filter(t => t.status === 'Completed');
-    const fileName = `เบิกงวด ${formatBackupDate()}`;
+    const workers = await fetchAllWorkers().catch(() => []);
+
+    let fileName = customName ? String(customName).trim() : '';
+    if (!fileName) {
+      if (startDate && endDate) {
+        fileName = `Backup ${startDate} ถึง ${endDate}`;
+      } else if (startDate) {
+        fileName = `Backup ตั้งแต่ ${startDate}`;
+      } else if (endDate) {
+        fileName = `Backup ถึง ${endDate}`;
+      } else {
+        fileName = `เบิกงวด ${formatBackupDate()}`;
+      }
+    }
+
+    const targetGroupIds = new Set(logs.map(l => String(l.GroupID || l.group_id)).filter(Boolean));
     let imagesData = {};
 
     if (isCloudConfigured()) {
       const imgRows = await sbFetch('/rest/v1/log_images?select=*');
-      (imgRows || []).forEach(r => { imagesData[r.group_id] = r.image_urls; });
+      (imgRows || []).forEach(r => {
+        if (!startDate && !endDate) {
+          imagesData[r.group_id] = r.image_urls;
+        } else if (targetGroupIds.has(String(r.group_id))) {
+          imagesData[r.group_id] = r.image_urls;
+        }
+      });
       const created = await sbFetch('/rest/v1/log_backups', {
         method: 'POST',
         headers: { 'Prefer': 'return=representation' },
@@ -1767,22 +1919,34 @@ const Api = (() => {
           images_data: imagesData
         })
       });
-      return { fileId: created?.[0]?.id, fileName, url: '#' };
+      return { fileId: created?.[0]?.id, fileName, url: '#', logsCount: logs.length, groupsCount: targetGroupIds.size };
     }
 
-    imagesData = readLocal(LOCAL_KEYS.IMAGES, {});
+    const allLocalImages = readLocal(LOCAL_KEYS.IMAGES, {});
+    if (!startDate && !endDate) {
+      imagesData = { ...allLocalImages };
+    } else {
+      targetGroupIds.forEach(gid => {
+        if (allLocalImages[gid]) imagesData[gid] = allLocalImages[gid];
+      });
+    }
+
     const backups = readLocal(LOCAL_KEYS.BACKUPS, []);
     const newBackup = {
       id: generateUuid(),
       name: fileName,
+      startDate: startDate || null,
+      endDate: endDate || null,
       createdDate: new Date().toISOString(),
       logsData: logs,
       imagesData,
-      completedTasksData: completedTasks
+      completedTasksData: completedTasks,
+      allTasksData: allTasksNow,
+      workersData: workers
     };
     backups.unshift(newBackup);
     writeLocal(LOCAL_KEYS.BACKUPS, backups);
-    return { fileId: newBackup.id, fileName, url: '#' };
+    return { fileId: newBackup.id, fileName, url: '#', logsCount: logs.length, groupsCount: targetGroupIds.size };
   }
 
   async function clearAllLogs() {
@@ -1816,46 +1980,366 @@ const Api = (() => {
     }));
   }
 
+  function groupLogRows(logs = []) {
+    const groups = {};
+    logs.forEach(row => {
+      const gid = row.GroupID || row.group_id;
+      if (!gid) return;
+      if (!groups[gid]) {
+        groups[gid] = {
+          GroupID: gid,
+          Date: row.Date || row.work_date,
+          Site: row.Site || row.site || '',
+          JobDetail: row.JobDetail || row.job_detail || '',
+          RequestedBy: row.RequestedBy || row.requested_by || '',
+          TaskId: row.TaskId ?? row.task_id ?? null,
+          Workers: []
+        };
+      }
+      groups[gid].Workers.push(mapLogRowFromDb(row));
+    });
+    const groupList = Object.values(groups);
+    groupList.sort((a, b) => String(b.Date || '').localeCompare(String(a.Date || '')));
+    return groupList;
+  }
+
   async function getBackupData(payload) {
     const fileId = payload.fileId;
     let backupName = '';
     let logs = [];
+    let imagesData = {};
     let completedTasks = [];
+    let allTasks = [];
+    let workers = [];
+    let startDate = null;
+    let endDate = null;
+    let createdDate = null;
 
     if (isCloudConfigured()) {
       const rows = await sbFetch(`/rest/v1/log_backups?select=*&id=eq.${encodeURIComponent(fileId)}`);
       if (!rows || !rows.length) throw new Error('ไม่พบข้อมูลสำรองนี้');
       backupName = rows[0].name;
-      logs = rows[0].logs_data || [];
+      logs = (rows[0].logs_data || []).map(mapLogRowFromDb);
+      imagesData = rows[0].images_data || {};
+      createdDate = rows[0].created_at || null;
+      workers = await fetchAllWorkers().catch(() => []);
+      allTasks = await getTasks().catch(() => []);
     } else {
       const backups = readLocal(LOCAL_KEYS.BACKUPS, []);
       const found = backups.find(b => String(b.id) === String(fileId));
       if (!found) throw new Error('ไม่พบข้อมูลสำรองนี้');
       backupName = found.name;
-      logs = found.logsData || [];
+      logs = (found.logsData || []).map(mapLogRowFromDb);
+      imagesData = found.imagesData || {};
       completedTasks = Array.isArray(found.completedTasksData) ? found.completedTasksData : [];
+      allTasks = Array.isArray(found.allTasksData) ? found.allTasksData : await getTasks().catch(() => []);
+      workers = Array.isArray(found.workersData) ? found.workersData : await fetchAllWorkers().catch(() => []);
+      startDate = found.startDate || null;
+      endDate = found.endDate || null;
+      createdDate = found.createdDate || null;
     }
 
-    const groups = {};
-    logs.forEach(row => {
-      const gid = row.GroupID;
-      if (!gid) return;
-      if (!groups[gid]) {
-        groups[gid] = {
-          GroupID: gid,
-          Date: row.Date,
-          Site: row.Site,
-          JobDetail: row.JobDetail,
-          RequestedBy: row.RequestedBy,
-          Workers: []
-        };
-      }
-      groups[gid].Workers.push(row);
-    });
+    const groupList = groupLogRows(logs);
+    if (!startDate || !endDate) {
+      const dates = groupList.map(g => String(g.Date || '').slice(0, 10)).filter(Boolean).sort();
+      if (!startDate && dates.length) startDate = dates[0];
+      if (!endDate && dates.length) endDate = dates[dates.length - 1];
+    }
 
-    const groupList = Object.values(groups);
-    groupList.sort((a, b) => String(b.Date || '').localeCompare(String(a.Date || '')));
-    return { fileName: backupName, logs: groupList, completedTasks };
+    return {
+      fileId,
+      fileName: backupName,
+      startDate,
+      endDate,
+      createdDate,
+      logs: groupList,
+      rawLogs: logs,
+      imagesData,
+      completedTasks,
+      tasks: allTasks,
+      workers
+    };
+  }
+
+  async function buildBackupPackageData(options = {}) {
+    const { fileId = null, startDate = null, endDate = null, customName = '', saveToHistory = false } = options;
+
+    if (fileId) {
+      const data = await getBackupData({ fileId });
+      return {
+        version: '3.0-offline-package',
+        exportedAt: new Date().toISOString(),
+        fileId: data.fileId,
+        fileName: data.fileName,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        workers: data.workers || [],
+        rawLogs: data.rawLogs || [],
+        logs: data.logs || [],
+        imagesData: data.imagesData || {},
+        tasks: data.tasks || [],
+        completedTasks: data.completedTasks || []
+      };
+    }
+
+    let savedFileId = null;
+    if (saveToHistory) {
+      const saved = await backupSpreadsheet({ startDate, endDate, customName });
+      savedFileId = saved.fileId;
+      return await buildBackupPackageData({ fileId: savedFileId });
+    }
+
+    const allLogs = await fetchAllLogRows();
+    const rawLogs = (startDate || endDate)
+      ? allLogs.filter(l => isDateInRange(l.work_date || l.Date, startDate, endDate))
+      : allLogs;
+    const groupList = groupLogRows(rawLogs);
+    const targetGroupIds = new Set(rawLogs.map(l => String(l.GroupID || l.group_id)).filter(Boolean));
+    let imagesData = {};
+
+    if (isCloudConfigured()) {
+      const imgRows = await sbFetch('/rest/v1/log_images?select=*');
+      (imgRows || []).forEach(r => {
+        if (targetGroupIds.has(String(r.group_id))) {
+          imagesData[r.group_id] = r.image_urls;
+        }
+      });
+    } else {
+      const allLocalImages = readLocal(LOCAL_KEYS.IMAGES, {});
+      targetGroupIds.forEach(gid => {
+        if (allLocalImages[gid]) imagesData[gid] = allLocalImages[gid];
+      });
+    }
+
+    const workers = await fetchAllWorkers().catch(() => []);
+    const tasks = await getTasks().catch(() => []);
+    const completedTasks = tasks.filter(t => t.status === 'Completed');
+
+    let fileName = customName ? String(customName).trim() : '';
+    if (!fileName) {
+      if (startDate && endDate) fileName = `Backup_${startDate}_ถึง_${endDate}`;
+      else fileName = `Backup_${formatBackupDate()}`;
+    }
+
+    return {
+      version: '3.0-offline-package',
+      exportedAt: new Date().toISOString(),
+      fileName,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      workers,
+      rawLogs,
+      logs: groupList,
+      imagesData,
+      tasks,
+      completedTasks
+    };
+  }
+
+  async function importBackupPackage(packageData, options = {}) {
+    const {
+      mode = 'replace_matching', // 'replace_matching' | 'replace_date_range'
+      selectedGroupIds = null,
+      selectedTaskIds = null,
+      saveToBackupHistory = true
+    } = options;
+
+    if (!packageData || typeof packageData !== 'object') {
+      throw new Error('รูปแบบไฟล์ Backup ไม่ถูกต้อง');
+    }
+
+    let incomingRows = [];
+    if (Array.isArray(packageData.rawLogs) && packageData.rawLogs.length > 0) {
+      incomingRows = packageData.rawLogs.map(mapLogRowFromDb);
+    } else if (Array.isArray(packageData.logs)) {
+      packageData.logs.forEach(item => {
+        if (Array.isArray(item.Workers)) {
+          item.Workers.forEach(w => {
+            incomingRows.push(mapLogRowFromDb({
+              ...w,
+              GroupID: w.GroupID || item.GroupID,
+              Date: w.Date || item.Date,
+              Site: w.Site || item.Site,
+              JobDetail: w.JobDetail || item.JobDetail,
+              RequestedBy: w.RequestedBy || item.RequestedBy,
+              TaskId: w.TaskId ?? item.TaskId ?? null
+            }));
+          });
+        } else if (item.GroupID || item.group_id) {
+          incomingRows.push(mapLogRowFromDb(item));
+        }
+      });
+    }
+
+    if (Array.isArray(selectedGroupIds) && selectedGroupIds.length > 0) {
+      const allowedSet = new Set(selectedGroupIds.map(String));
+      incomingRows = incomingRows.filter(r => allowedSet.has(String(r.GroupID)));
+    }
+
+    const incomingImages = packageData.imagesData || packageData.images || {};
+    const incomingTasks = [
+      ...(Array.isArray(packageData.tasks) ? packageData.tasks : []),
+      ...(Array.isArray(packageData.completedTasks) ? packageData.completedTasks : [])
+    ];
+    const taskMap = new Map();
+    incomingTasks.forEach(t => {
+      if (t && t.id != null) taskMap.set(String(t.id), t);
+    });
+    let tasksToImport = Array.from(taskMap.values());
+    if (Array.isArray(selectedTaskIds)) {
+      const allowedTaskSet = new Set(selectedTaskIds.map(String));
+      tasksToImport = tasksToImport.filter(t => allowedTaskSet.has(String(t.id)));
+    }
+
+    const incomingGroupIds = Array.from(new Set(incomingRows.map(r => String(r.GroupID)).filter(Boolean)));
+    const startDate = packageData.startDate || null;
+    const endDate = packageData.endDate || null;
+
+    if (saveToBackupHistory && incomingRows.length > 0) {
+      const histName = packageData.fileName
+        ? `${packageData.fileName} (นำเข้าจาก PC)`
+        : `นำเข้าจาก PC ${formatBackupDate()}`;
+      if (isCloudConfigured()) {
+        await sbFetch('/rest/v1/log_backups', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: histName,
+            logs_data: incomingRows,
+            images_data: incomingImages
+          })
+        }).catch(() => {});
+      } else {
+        const backups = readLocal(LOCAL_KEYS.BACKUPS, []);
+        backups.unshift({
+          id: generateUuid(),
+          name: histName,
+          startDate,
+          endDate,
+          createdDate: new Date().toISOString(),
+          logsData: incomingRows,
+          imagesData: incomingImages,
+          completedTasksData: tasksToImport.filter(t => t.status === 'Completed'),
+          allTasksData: tasksToImport,
+          workersData: packageData.workers || []
+        });
+        writeLocal(LOCAL_KEYS.BACKUPS, backups);
+      }
+    }
+
+    let updatedGroupsCount = 0;
+    if (incomingRows.length > 0 || (mode === 'replace_date_range' && startDate && endDate)) {
+      const currentLogs = await fetchAllLogRows();
+      const groupsToRemove = new Set(incomingGroupIds);
+
+      if (mode === 'replace_date_range' && (startDate || endDate)) {
+        currentLogs.forEach(l => {
+          const d = l.Date || l.work_date;
+          if (isDateInRange(d, startDate, endDate)) {
+            groupsToRemove.add(String(l.GroupID || l.group_id));
+          }
+        });
+      }
+
+      if (isCloudConfigured()) {
+        for (const gid of groupsToRemove) {
+          await sbFetch(`/rest/v1/daily_logs?group_id=eq.${encodeURIComponent(gid)}`, { method: 'DELETE' }).catch(() => {});
+          await sbFetch(`/rest/v1/log_images?group_id=eq.${encodeURIComponent(gid)}`, { method: 'DELETE' }).catch(() => {});
+        }
+
+        if (incomingRows.length > 0) {
+          const dbPayload = incomingRows.map(r => ({
+            group_id: r.GroupID,
+            work_date: r.Date,
+            site: r.Site || '',
+            job_detail: r.JobDetail || '',
+            requested_by: r.RequestedBy || '',
+            worker_name: r.WorkerName,
+            daily_wage: Number(r.DailyWage) || 0,
+            wage_type: r.WageType || 'hourly',
+            hours: Number(r.Hours) || 0,
+            ot_hours: Number(r.OTHours) || 0,
+            fixed_amount: Number(r.FixedAmount) || 0,
+            raw_wage: Number(r.RawWage) || 0,
+            total_with_markup: Number(r.TotalWithMarkup) || 0,
+            task_id: r.TaskId != null ? Number(r.TaskId) : null,
+            created_at: r.CreatedAt || new Date().toISOString()
+          }));
+          await sbFetch('/rest/v1/daily_logs', {
+            method: 'POST',
+            body: JSON.stringify(dbPayload)
+          });
+        }
+
+        for (const gid of incomingGroupIds) {
+          const imgs = incomingImages[gid];
+          if (Array.isArray(imgs) && imgs.length > 0) {
+            const uploadedUrls = [];
+            for (let i = 0; i < imgs.length; i++) {
+              const imgStr = imgs[i];
+              if (typeof imgStr === 'string' && imgStr.startsWith('data:image/')) {
+                const url = await uploadBase64ToSupabase(imgStr, gid, i);
+                uploadedUrls.push(url);
+              } else if (imgStr) {
+                uploadedUrls.push(imgStr);
+              }
+            }
+            if (uploadedUrls.length > 0) {
+              await saveGroupImages(gid, uploadedUrls);
+            }
+          }
+        }
+      } else {
+        const currentLocal = readLocal(LOCAL_KEYS.LOGS, []);
+        const keptLocal = currentLocal.filter(r => !groupsToRemove.has(String(r.GroupID || r.group_id)));
+        let maxId = keptLocal.reduce((m, r) => Math.max(m, Number(r.ID) || 0), 0);
+        incomingRows.forEach(r => {
+          maxId++;
+          keptLocal.push({ ...r, ID: maxId, id: maxId });
+        });
+        writeLocal(LOCAL_KEYS.LOGS, keptLocal);
+
+        const liveImgs = readLocal(LOCAL_KEYS.IMAGES, {});
+        groupsToRemove.forEach(gid => { delete liveImgs[gid]; });
+        incomingGroupIds.forEach(gid => {
+          if (Array.isArray(incomingImages[gid]) && incomingImages[gid].length > 0) {
+            liveImgs[gid] = incomingImages[gid];
+          }
+        });
+        writeLocal(LOCAL_KEYS.IMAGES, liveImgs);
+      }
+      updatedGroupsCount = incomingGroupIds.length;
+    }
+
+    let updatedTasksCount = 0;
+    if (tasksToImport.length > 0) {
+      if (isCloudConfigured()) {
+        for (const t of tasksToImport) {
+          try {
+            await updateTask(t.id, t);
+            updatedTasksCount++;
+          } catch (_) {
+            try {
+              await createTask(t);
+              updatedTasksCount++;
+            } catch (__) {}
+          }
+        }
+      } else {
+        const liveTasks = readLocal(LOCAL_KEYS.TASKS, []);
+        const liveMap = new Map(liveTasks.map(t => [String(t.id), t]));
+        tasksToImport.forEach(t => {
+          liveMap.set(String(t.id), t);
+          updatedTasksCount++;
+        });
+        writeLocal(LOCAL_KEYS.TASKS, Array.from(liveMap.values()));
+      }
+    }
+
+    return {
+      updatedGroupsCount,
+      updatedRowsCount: incomingRows.length,
+      updatedTasksCount
+    };
   }
 
   async function restoreBackupGroups(payload) {
@@ -1963,6 +2447,68 @@ const Api = (() => {
     return { restored, skipped, restoredTasks };
   }
 
+  // ============================================================
+  // OFFLINE PC MANAGER INTEGRATION (ทำงานร่วมกับ offline_manager.py)
+  // ============================================================
+  async function checkOfflineMode() {
+    try {
+      const res = await fetch('/api/offline/info');
+      if (!res.ok) return null;
+      const json = await res.json();
+      return json && json.is_offline_mode ? json : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function loadOfflineFolderData(options = {}) {
+    const { folder = '', zip = '' } = options;
+    let url = '/api/offline/load';
+    if (folder) url += `?folder=${encodeURIComponent(folder)}`;
+    else if (zip) url += `?zip=${encodeURIComponent(zip)}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'โหลดข้อมูลงวดงานบน PC ไม่สำเร็จ');
+
+    const pkg = json.data || {};
+    if (Array.isArray(pkg.rawLogs) && pkg.rawLogs.length > 0) {
+      writeLocal(LOCAL_KEYS.LOGS, pkg.rawLogs.map(mapLogRowFromDb));
+    } else if (Array.isArray(pkg.logs)) {
+      const flat = [];
+      pkg.logs.forEach(g => {
+        (g.Workers || []).forEach(w => flat.push(mapLogRowFromDb(w)));
+      });
+      writeLocal(LOCAL_KEYS.LOGS, flat);
+    }
+    if (Array.isArray(pkg.tasks)) writeLocal(LOCAL_KEYS.TASKS, pkg.tasks);
+    if (Array.isArray(pkg.workers) && pkg.workers.length > 0) writeLocal(LOCAL_KEYS.WORKERS, pkg.workers);
+    if (pkg.imagesData) writeLocal(LOCAL_KEYS.IMAGES, pkg.imagesData);
+
+    return json;
+  }
+
+  async function saveOfflineCurrentState() {
+    const pkg = await buildBackupPackageData({});
+    const res = await fetch('/api/offline/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pkg)
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'บันทึกข้อมูลงวดงานลง PC ไม่สำเร็จ');
+    return json;
+  }
+
+  async function exportOfflineCurrentZip() {
+    const res = await fetch('/api/offline/export-zip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'แพ็กไฟล์ .zip ไม่สำเร็จ');
+    return json;
+  }
+
   return {
     isCloudConfigured,
     getConfig,
@@ -1978,6 +2524,7 @@ const Api = (() => {
     updateLogGroup,
     getReport,
     getPivotReport,
+    getDailyWorkerHoursSummary,
     getSiteHistory,
     getRequesterHistory,
     backupSpreadsheet,
@@ -1985,6 +2532,8 @@ const Api = (() => {
     clearAllLogs,
     listBackups,
     getBackupData,
+    buildBackupPackageData,
+    importBackupPackage,
     restoreBackupGroups,
     // Tasks API
     getTasks,
@@ -2002,7 +2551,12 @@ const Api = (() => {
     getTaskMedia,
     listTaskMedia,
     deleteTaskMedia,
-    MAX_MEDIA_SIZE_BYTES
+    MAX_MEDIA_SIZE_BYTES,
+    // Offline PC Manager API
+    checkOfflineMode,
+    loadOfflineFolderData,
+    saveOfflineCurrentState,
+    exportOfflineCurrentZip
   };
 })();
 

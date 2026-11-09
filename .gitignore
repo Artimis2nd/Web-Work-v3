@@ -1,3 +1,6 @@
 ﻿
 .superpowers/
 test/
+__pycache__/
+pc_backups/
+_work/

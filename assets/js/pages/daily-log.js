@@ -7,6 +7,14 @@
   const HOURLY_RATE_DIVISOR = 8;
   const FERN_NAME = 'เฟิร์น';
 
+  function isSupervisorWorker(w) {
+    if (!w) return false;
+    if (w.Role === 'Supervisor' || w.role === 'Supervisor' || w.Role === 'หัวหน้างาน') return true;
+    if (w.FullName && w.FullName.includes(FERN_NAME)) return true;
+    return false;
+  }
+
+  let rawAllWorkers = [];
   let allWorkers = [];
   let selectedWorkers = new Map(); // id -> { worker, wageType, hours, otHours, fixedAmount }
   // แต่ละ element: { type: 'url', data: 'https://...' } หรือ { type: 'base64', data: 'data:...' }
@@ -21,11 +29,76 @@
   let lastAutoFilledRequester = '';
   let logSubItemsState = []; // รายการย่อยของใบสั่งงานที่เลือก [{ id, name, base_actual_qty, added_qty, target_qty, unit, status, progress_percent, issue_note }]
   let newLogSubItemsState = []; // รายการย่อยที่เพิ่มใหม่จากหน้างาน [{ id, name, added_qty, target_qty, unit, status, progress_percent, issue_note }]
+  let dailyWorkerHoursSummary = {}; // เก็บสรุปชั่วโมงทำงานสะสมรายวันของคนงานแต่ละคนในวันที่เลือก { [workerName]: { regularHours, otHours, fixedAmount, entries: [...] } }
 
   // ─── Helper: safe number ─────────────────────────────
   function safeNum(v) {
     const n = Number(v);
     return isNaN(n) ? 0 : Math.max(0, n);
+  }
+
+  function getCurrentApiDate() {
+    const dateInput = document.getElementById('f-date')?.value || '';
+    const dateMatch = dateInput.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : dateInput;
+  }
+
+  async function refreshDailyHoursSummary() {
+    const apiDate = getCurrentApiDate();
+    if (!apiDate) {
+      dailyWorkerHoursSummary = {};
+      return;
+    }
+    try {
+      if (typeof Api !== 'undefined' && Api.getDailyWorkerHoursSummary) {
+        dailyWorkerHoursSummary = await Api.getDailyWorkerHoursSummary(apiDate, editGroupId);
+      } else {
+        dailyWorkerHoursSummary = {};
+      }
+    } catch (err) {
+      console.warn('โหลดสรุปชั่วโมงคนงานรายวันไม่สำเร็จ:', err);
+      dailyWorkerHoursSummary = {};
+    }
+  }
+
+  function renderHourAlertBanner(workerName, hours, wageType) {
+    if (wageType !== 'hourly') return '';
+    const dailyInfo = dailyWorkerHoursSummary[workerName];
+    const alreadyRegular = dailyInfo ? (dailyInfo.regularHours || 0) : 0;
+    if (alreadyRegular <= 0) return '';
+
+    const currentTotal = alreadyRegular + Number(hours || 0);
+    if (currentTotal > 8) {
+      const over = currentTotal - 8;
+      const rec = Math.max(0, 8 - alreadyRegular);
+      return `
+        <div class="p-2 rounded bg-red-50 border border-red-300 text-xs text-red-700 flex items-start gap-1.5 animate-pulse mt-2">
+          <span class="text-sm">⚠️</span>
+          <div>
+            <strong>คำเตือนเวลาเกิน 8 ชม./วัน:</strong> วันนี้ลงไปแล้ว ${alreadyRegular} ชม. + ใบนี้ ${hours} ชม. = <strong>รวม ${currentTotal} ชม.</strong> (เกิน ${over} ชม.)
+            <div class="text-[11px] text-red-600 mt-0.5">💡 แนะนำ: ปรับเวลาปกติในใบนี้เหลือ <strong>${rec} ชม.</strong> แล้วใส่ส่วนเกิน <strong>${over} ชม.</strong> ในช่อง OT แทน</div>
+          </div>
+        </div>
+      `;
+    }
+    if (alreadyRegular >= 8) {
+      return `
+        <div class="p-2 rounded bg-amber-50 border border-amber-300 text-xs text-amber-800 flex items-start gap-1.5 mt-2">
+          <span class="text-sm">⛔</span>
+          <div>
+            <strong>เวลาปกติครบ 8 ชม. แล้ว:</strong> วันนี้คนงานบันทึกเวลาปกติครบเต็มวันแล้ว หากทำงานเพิ่มในใบนี้กรุณาใส่ในช่อง <strong>OT</strong>
+          </div>
+        </div>
+      `;
+    }
+    return `
+      <div class="p-2 rounded bg-blue-50 border border-blue-200 text-xs text-blue-800 flex items-start gap-1.5 mt-2">
+        <span class="text-sm">💡</span>
+        <div>
+          <strong>ปรับชั่วโมงอัตโนมัติ:</strong> วันนี้ทำงานอื่นไปแล้ว ${alreadyRegular} ชม. → ใบนี้ปรับเป็น <strong>${hours} ชม.</strong> เพื่อให้ครบ 8 ชม./วัน พอดี
+        </div>
+      </div>
+    `;
   }
 
   // ─── Layout ────────────────────────────────────────────────
@@ -166,8 +239,10 @@
       lang: 'th-TH',
       autoApply: true,
       setup: (picker) => {
-        picker.on('selected', (date) => {
-          // Litepicker sets the input value automatically in DD/MM/YYYY format
+        picker.on('selected', async () => {
+          await refreshDailyHoursSummary();
+          renderWorkerList();
+          updateSummary();
         });
       }
     });
@@ -177,6 +252,12 @@
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const yyyy = today.getFullYear();
     document.getElementById('f-date').value = `${dd}/${mm}/${yyyy}`;
+
+    document.getElementById('f-date').addEventListener('change', async () => {
+      await refreshDailyHoursSummary();
+      renderWorkerList();
+      updateSummary();
+    });
 
     document.getElementById('f-task').addEventListener('change', onTaskChange);
     document.getElementById('log-form').addEventListener('submit', onSubmit);
@@ -291,14 +372,41 @@
     list.innerHTML = allWorkers.map(w => {
       const sel = selectedWorkers.get(String(w.ID));
       const checked = sel ? 'checked' : '';
-      const isFern = w.FullName.includes(FERN_NAME);
+      const isSuper = isSupervisorWorker(w);
+      const isInactive = w.Status === 'Inactive';
+
+      const dailyInfo = dailyWorkerHoursSummary[w.FullName];
+      let dailyInfoHtml = '';
+      if (dailyInfo && (dailyInfo.regularHours > 0 || dailyInfo.otHours > 0 || dailyInfo.fixedAmount > 0)) {
+        const taskLabels = (dailyInfo.entries || []).map(e => {
+          const t = availableTasks.find(x => String(x.id) === String(e.taskId));
+          const code = t ? (t.task_code || `TSK-${t.id}`) : 'งานทั่วไป';
+          return `${code} (${e.hours}h${e.otHours > 0 ? `+OT${e.otHours}` : ''})`;
+        }).join(', ');
+
+        const isMaxed = dailyInfo.regularHours >= 8;
+        const badgeStyle = isMaxed
+          ? 'background:#fef2f2; color:#991b1b; border:1px solid #fecaca;'
+          : 'background:#fefce8; color:#854d0e; border:1px solid #fef08a;';
+
+        dailyInfoHtml = `
+          <div class="mt-1 flex items-center gap-1.5 flex-wrap">
+            <span class="badge text-[11px] font-medium" style="${badgeStyle}">
+              ⏱️ วันนี้ลงแล้ว: ปกติ ${dailyInfo.regularHours} ชม.${dailyInfo.otHours > 0 ? ` + OT ${dailyInfo.otHours} ชม.` : ''}
+            </span>
+            ${taskLabels ? `<span class="text-[11px] text-slate-400 font-mono">[${taskLabels}]</span>` : ''}
+          </div>
+        `;
+      }
+
       return `
         <div class="worker-item" data-id="${w.ID}">
           <label class="worker-check ${checked}" data-id="${w.ID}">
             <span>
-              <span class="font-medium block">${Utils.escapeHtml(w.FullName)}</span>
+              <span class="font-medium block">${Utils.escapeHtml(w.FullName)} ${isInactive ? '<span class="text-xs text-amber-600 font-normal">(พักงาน)</span>' : ''}</span>
               <span class="text-xs font-mono" style="color:var(--ink-soft)">฿${Utils.money(w.DailyWage)}/วัน</span>
-              ${isFern ? '<span class="no-markup" style="color:var(--red);font-size:0.7rem;margin-left:0.5rem">(ไม่คิด +20%)</span>' : ''}
+              ${isSuper ? '<span class="no-markup" style="color:var(--red);font-size:0.7rem;margin-left:0.5rem">👑 หัวหน้างาน (ไม่คิด +20%)</span>' : ''}
+              ${dailyInfoHtml}
             </span>
             <input type="checkbox" data-checkbox-id="${w.ID}" ${checked}>
           </label>
@@ -423,6 +531,10 @@
       <div class="wage-calc-result" data-result-id="${worker.ID}">
         ${resultText}
       </div>
+
+      <div class="wage-hours-alert" data-alert-id="${worker.ID}">
+        ${renderHourAlertBanner(worker.FullName, hours, wageType)}
+      </div>
     `;
   }
 
@@ -434,10 +546,14 @@
     if (selectedWorkers.has(id)) {
       selectedWorkers.delete(id);
     } else {
+      const dailyInfo = dailyWorkerHoursSummary[worker.FullName];
+      const alreadyRegular = dailyInfo ? (dailyInfo.regularHours || 0) : 0;
+      const suggestedHours = Math.max(0, 8 - alreadyRegular);
+
       selectedWorkers.set(id, {
         worker,
         wageType: 'hourly',
-        hours: 8,
+        hours: suggestedHours,
         otHours: 0,
         fixedAmount: 0
       });
@@ -496,6 +612,11 @@
       resultEl.innerHTML = text;
     }
 
+    const alertEl = container.querySelector(`[data-alert-id="${id}"]`);
+    if (alertEl) {
+      alertEl.innerHTML = renderHourAlertBanner(worker.FullName, sel.hours, sel.wageType);
+    }
+
     updateSummary();
   }
 
@@ -510,9 +631,9 @@
     return normalPay + otPay;
   }
 
-  function calcTotalWage(rawWage, isFern) {
+  function calcTotalWage(rawWage, isSupervisor) {
     const rw = safeNum(rawWage);
-    if (isFern) return rw;
+    if (isSupervisor) return rw;
     return rw * MARKUP_RATE;
   }
 
@@ -527,7 +648,7 @@
       summaryList.innerHTML = entries.map(sel => {
         const w = sel.worker;
         if (!w) return '';
-        const isFern = w.FullName.includes(FERN_NAME);
+        const isSuper = isSupervisorWorker(w);
         const rawWage = calcRawWage(w, sel);
         let detail = '';
         if (sel.wageType === 'fixed') {
@@ -539,12 +660,12 @@
           detail = parts.join(' + ') || '0 ชม.';
         }
         // fixed: แสดง raw wage (ไม่มี markup)
-        // hourly: แสดง total wage (รวม markup)
+        // hourly: แสดง total wage (รวม markup หรือไม่บวกถ้าเป็นหัวหน้างาน)
         let displayWage;
         if (sel.wageType === 'fixed') {
           displayWage = rawWage;
         } else {
-          displayWage = calcTotalWage(rawWage, isFern);
+          displayWage = calcTotalWage(rawWage, isSuper);
         }
         return `
           <div class="flex justify-between">
@@ -562,13 +683,13 @@
     entries.forEach(sel => {
       const w = sel.worker;
       if (!w) return;
-      const isFern = w.FullName.includes(FERN_NAME);
+      const isSuper = isSupervisorWorker(w);
       const rawWage = calcRawWage(w, sel);
       totalRaw += rawWage;
       if (sel.wageType === 'fixed') {
         totalFixed += rawWage; // fixed = no +20%
       } else {
-        totalNormal += calcTotalWage(rawWage, isFern); // already with +20%
+        totalNormal += calcTotalWage(rawWage, isSuper); // with +20% (except supervisor)
       }
     });
 
@@ -1038,8 +1159,11 @@
   // ─── Load Data ─────────────────────────────────────────────
   async function loadWorkers() {
     try {
-      allWorkers = (await Api.getWorkers()).filter(w => w.Status === 'Active');
+      rawAllWorkers = await Api.getWorkers();
+      // แสดงเฉพาะคนงานที่สถานะ ทำงานอยู่ (Active)
+      allWorkers = rawAllWorkers.filter(w => w.Status === 'Active');
       document.getElementById('worker-loading').textContent = '';
+      await refreshDailyHoursSummary();
       renderWorkerList();
     } catch (err) {
       document.getElementById('worker-loading').textContent = '';
@@ -1080,6 +1204,7 @@
 
       editGroupId = groupId;
       document.getElementById('f-date').value = Utils.toInputDate(data.date);
+      await refreshDailyHoursSummary();
       document.getElementById('f-site').value = data.site || '';
       document.getElementById('f-detail').value = data.jobDetail || '';
       document.getElementById('f-requester').value = data.requestedBy || '';
@@ -1131,7 +1256,15 @@
       // Select workers and set their wage data
       if (data.workers && Array.isArray(data.workers)) {
         data.workers.forEach(w => {
-          const worker = allWorkers.find(a => a.FullName === w.workerName);
+          let worker = allWorkers.find(a => a.FullName === w.workerName);
+          if (!worker && rawAllWorkers.length > 0) {
+            // กรณีคนงานนี้ถูกพักงานไปแล้ว แต่เคยมีชื่อในใบงานเดิมนี้ ให้ดึงเข้ามาแสดงผลด้วย
+            const inactiveWorker = rawAllWorkers.find(a => a.FullName === w.workerName);
+            if (inactiveWorker) {
+              allWorkers.push(inactiveWorker);
+              worker = inactiveWorker;
+            }
+          }
           if (worker) {
             selectedWorkers.set(String(worker.ID), {
               worker,
@@ -1228,13 +1361,44 @@
       }
     }
 
+    // ตรวจสอบชั่วโมงทำงานสะสมในวันเดียวกัน ป้องกันการลงเวลาปกติซ้ำซ้อนเกิน 8 ชม./วัน
+    const overLimitWorkers = [];
+    selectedWorkers.forEach(sel => {
+      if (sel.wageType === 'hourly') {
+        const dailyInfo = dailyWorkerHoursSummary[sel.worker.FullName];
+        const already = dailyInfo ? (dailyInfo.regularHours || 0) : 0;
+        const currentH = safeNum(sel.hours);
+        if (already + currentH > 8) {
+          overLimitWorkers.push({
+            name: sel.worker.FullName,
+            already,
+            current: currentH,
+            total: already + currentH,
+            over: (already + currentH) - 8,
+            suggested: Math.max(0, 8 - already)
+          });
+        }
+      }
+    });
+
+    if (overLimitWorkers.length > 0) {
+      const workerLines = overLimitWorkers.map(w => 
+        `• ${w.name}: เดิม ${w.already} ชม. + ใบนี้ ${w.current} ชม. = รวม ${w.total} ชม. (เกิน ${w.over} ชม. -> แนะนำเวลาปกติ ${w.suggested} ชม. แล้วใส่ OT ${w.over} ชม.)`
+      ).join('\n');
+      const confirmMsg = `⚠️ ตรวจพบคนงานทำงานปกติเกิน 8 ชม. ในวันเดียวกัน:\n\n${workerLines}\n\nต้องการยืนยันบันทึกหรือไม่?\n(แนะนำให้กดยกเลิก แล้วลดเวลาปกติลงและใส่ส่วนเกินในช่อง OT แทน)`;
+      if (!confirm(confirmMsg)) {
+        return;
+      }
+    }
+
     const workersPayload = Array.from(selectedWorkers.values()).map(sel => ({
       workerName: sel.worker.FullName,
       dailyWage: safeNum(sel.worker.DailyWage),
       wageType: sel.wageType,
       hours: safeNum(sel.hours),
       otHours: safeNum(sel.otHours),
-      fixedAmount: safeNum(sel.fixedAmount)
+      fixedAmount: safeNum(sel.fixedAmount),
+      role: sel.worker.Role || (isSupervisorWorker(sel.worker) ? 'Supervisor' : 'Worker')
     }));
 
     // Convert date from DD/MM/YYYY to YYYY-MM-DD for API

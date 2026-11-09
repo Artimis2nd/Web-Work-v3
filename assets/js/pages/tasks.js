@@ -175,21 +175,28 @@
             </div>
           </div>
 
-          <!-- ส่วนที่ 2: เอกสารแนบ รูปถ่ายกระดาษสั่งงาน / วิดีโอสั้น -->
-          <div class="p-3.5 rounded-lg bg-amber-50/40 border border-amber-200/80 space-y-2.5">
+          <!-- ส่วนที่ 2: เอกสารแนบ รูปถ่ายกระดาษสั่งงาน / ไฟล์ PDF / วิดีโอสั้น -->
+          <div class="p-3.5 rounded-lg bg-amber-50/40 border border-amber-200/80 space-y-2.5 transition-all" id="task-attachments-dropzone">
             <div class="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <label class="field-label mb-0 text-slate-800">📎 เอกสารแนบ / รูปถ่ายแบบกระดาษ / วิดีโอสั่งงาน</label>
-                <div class="text-xs text-slate-500">ถ่ายรูปกระดาษที่เขียนสั่งงาน หรือแนบคลิปวิดีโอสั้นอธิบายหน้างาน (สูงสุด 50 MB/ไฟล์)</div>
+                <label class="field-label mb-0 text-slate-800">📎 เอกสารแนบ / แบบแปลน PDF / รูปถ่าย / คลิปสั่งงาน</label>
+                <div class="text-xs text-slate-500">รองรับรูปถ่าย, ไฟล์ PDF หรือคลิปวิดีโอ (สูงสุด 50 MB) • <span class="text-amber-800 font-medium">กดปุ่ม หรือกด Ctrl+V เพื่อวางรูปที่ Copy ไว้ได้ทันที</span></div>
               </div>
               <div class="flex gap-1.5 flex-wrap">
-                <button type="button" id="btn-attach-photo" class="btn btn-outline btn-sm text-xs">
+                <button type="button" id="btn-attach-photo" class="btn btn-outline btn-sm text-xs inline-flex items-center gap-1">
                   📷 แนบรูป / ถ่ายรูป
                 </button>
-                <button type="button" id="btn-attach-video" class="btn btn-outline btn-sm text-xs">
+                <button type="button" id="btn-attach-paste" class="btn btn-outline btn-sm text-xs inline-flex items-center gap-1 bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100" title="กดเพื่อดึงรูปภาพที่ Copy ไว้ในเครื่องมาแนบ">
+                  📋 วางรูปที่ Copy
+                </button>
+                <button type="button" id="btn-attach-pdf" class="btn btn-outline btn-sm text-xs inline-flex items-center gap-1">
+                  📄 แนบไฟล์ PDF
+                </button>
+                <button type="button" id="btn-attach-video" class="btn btn-outline btn-sm text-xs inline-flex items-center gap-1">
                   🎥 แนบวิดีโอสั้น
                 </button>
                 <input type="file" id="input-attach-photo" accept="image/*" multiple class="hidden" style="display:none">
+                <input type="file" id="input-attach-pdf" accept="application/pdf,.pdf" multiple class="hidden" style="display:none">
                 <input type="file" id="input-attach-video" accept="video/*" multiple class="hidden" style="display:none">
               </div>
             </div>
@@ -533,18 +540,22 @@
           <div class="flex flex-wrap gap-1.5">
             ${attachments.map(att => {
               const isVideo = att.media_kind === 'video' || (att.type && att.type.startsWith('video/'));
+              const isPdf = att.media_kind === 'pdf' || (att.type && att.type.includes('pdf')) || String(att.name).toLowerCase().endsWith('.pdf');
+              const icon = isVideo ? '🎥' : (isPdf ? '📄' : '📷');
+              const defaultName = isVideo ? 'วิดีโอสั่งงาน' : (isPdf ? 'เอกสาร PDF' : 'รูปใบสั่งงาน');
+              const mediaKind = isVideo ? 'video' : (isPdf ? 'pdf' : 'image');
               return `
                 <button
                   type="button"
                   data-action="view-media"
                   data-media-id="${escapeHtml(att.id)}"
                   data-media-name="${escapeHtml(att.name || 'ไฟล์แนบ')}"
-                  data-media-kind="${isVideo ? 'video' : 'image'}"
+                  data-media-kind="${mediaKind}"
                   class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition-colors"
                   title="คลิกเพื่อเปิดดู ${escapeHtml(att.name || '')}"
                 >
-                  <span>${isVideo ? '🎥' : '📷'}</span>
-                  <span class="truncate max-w-[130px]">${escapeHtml(att.name || (isVideo ? 'วิดีโอสั่งงาน' : 'รูปใบสั่งงาน'))}</span>
+                  <span>${icon}</span>
+                  <span class="truncate max-w-[130px]">${escapeHtml(att.name || defaultName)}</span>
                 </button>
               `;
             }).join('')}
@@ -809,50 +820,62 @@
       const targetVal = it.target_qty !== null && it.target_qty !== undefined && it.target_qty > 0 ? String(it.target_qty) : '';
       const hasActual = (Number(it.actual_qty) || 0) > 0;
       return `
-        <div class="subitem-row p-2 bg-white rounded border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-2" data-subitem-id="${escapeHtml(it.id || `sub_${idx + 1}`)}">
-          <div class="flex items-center gap-1.5 flex-1">
-            <span class="font-mono text-xs font-bold text-slate-400 w-5 text-center">${idx + 1}.</span>
-            <input
-              type="text"
-              class="field-input text-xs flex-1 subitem-name-input"
-              placeholder="ชื่อรายการ (เช่น เดินท่อสายไฟ, ก่ออิฐ)"
-              value="${escapeHtml(it.name || '')}"
-            >
+        <div class="subitem-row p-2.5 bg-white rounded border border-slate-200 shadow-sm space-y-2" data-subitem-id="${escapeHtml(it.id || `sub_${idx + 1}`)}">
+          <div class="flex items-start gap-2">
+            <span class="font-mono text-xs font-bold text-slate-400 w-5 pt-1.5 text-center shrink-0">${idx + 1}.</span>
+            <textarea
+              rows="2"
+              class="field-input text-xs flex-1 subitem-name-input leading-relaxed py-1.5 resize-y"
+              placeholder="ชื่อรายการ (เช่น เดินท่อสายไฟ, วางบ่อพักสาย, ก่ออิฐ)"
+            >${escapeHtml(it.name || '')}</textarea>
           </div>
-          <div class="flex items-center gap-1.5 sm:w-auto">
-            <input
-              type="number"
-              step="any"
-              min="0"
-              class="field-input text-xs w-28 subitem-target-input"
-              placeholder="เป้า (เว้นได้)"
-              title="ปริมาณเป้าหมาย (เว้นว่างได้หากนับตามจริงหน้างาน)"
-              value="${escapeHtml(targetVal)}"
-            >
-            <input
-              type="text"
-              list="common-units-datalist"
-              class="field-input text-xs w-20 subitem-unit-input"
-              placeholder="หน่วย"
-              value="${escapeHtml(it.unit || '')}"
-            >
-            ${editingTaskId ? `
-              <select class="field-input text-xs w-28 subitem-status-select" title="สถานะรายการย่อย">
-                <option value="Pending" ${it.status === 'Pending' ? 'selected' : ''}>รอทำ</option>
-                <option value="In Progress" ${it.status === 'In Progress' ? 'selected' : ''}>กำลังทำ</option>
-                <option value="Completed" ${it.status === 'Completed' ? 'selected' : ''}>เสร็จแล้ว</option>
-                <option value="Blocked" ${it.status === 'Blocked' ? 'selected' : ''}>ติดปัญหา</option>
-                <option value="Cancelled" ${it.status === 'Cancelled' ? 'selected' : ''}>ยกเลิก</option>
-              </select>
-            ` : ''}
-            <button
-              type="button"
-              data-remove-subitem="${idx}"
-              class="btn btn-outline btn-sm text-red-600 px-2 py-1 text-xs"
-              title="ลบรายการย่อยนี้"
-            >✕</button>
+          <div class="flex items-center justify-between flex-wrap gap-2 pl-7">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <div class="flex items-center gap-1">
+                <span class="text-[11px] text-slate-400">เป้า:</span>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="field-input text-xs w-24 sm:w-28 subitem-target-input"
+                  placeholder="เป้า (เว้นได้)"
+                  title="ปริมาณเป้าหมาย (เว้นว่างได้หากนับตามจริงหน้างาน)"
+                  value="${escapeHtml(targetVal)}"
+                >
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="text-[11px] text-slate-400">หน่วย:</span>
+                <input
+                  type="text"
+                  list="common-units-datalist"
+                  class="field-input text-xs w-20 subitem-unit-input"
+                  placeholder="หน่วย"
+                  value="${escapeHtml(it.unit || '')}"
+                >
+              </div>
+              ${editingTaskId ? `
+                <div class="flex items-center gap-1">
+                  <span class="text-[11px] text-slate-400">สถานะ:</span>
+                  <select class="field-input text-xs w-24 sm:w-28 subitem-status-select" title="สถานะรายการย่อย">
+                    <option value="Pending" ${it.status === 'Pending' ? 'selected' : ''}>รอทำ</option>
+                    <option value="In Progress" ${it.status === 'In Progress' ? 'selected' : ''}>กำลังทำ</option>
+                    <option value="Completed" ${it.status === 'Completed' ? 'selected' : ''}>เสร็จแล้ว</option>
+                    <option value="Blocked" ${it.status === 'Blocked' ? 'selected' : ''}>ติดปัญหา</option>
+                    <option value="Cancelled" ${it.status === 'Cancelled' ? 'selected' : ''}>ยกเลิก</option>
+                  </select>
+                </div>
+              ` : ''}
+            </div>
+            <div class="flex items-center gap-2 ml-auto">
+              ${hasActual ? `<span class="text-[11px] text-blue-700 font-mono">↳ ทำสะสม: ${it.actual_qty} ${escapeHtml(it.unit || '')}</span>` : ''}
+              <button
+                type="button"
+                data-remove-subitem="${idx}"
+                class="btn btn-outline btn-sm text-red-600 px-2 py-1 text-xs inline-flex items-center gap-1"
+                title="ลบรายการย่อยนี้"
+              >✕ ลบ</button>
+            </div>
           </div>
-          ${hasActual ? `<div class="text-[11px] text-blue-700 font-mono sm:ml-6">↳ ทำสะสมแล้ว: ${it.actual_qty} ${escapeHtml(it.unit || '')}</div>` : ''}
         </div>
       `;
     }).join('');
@@ -874,7 +897,7 @@
     if (!draftAttachments.length) {
       container.innerHTML = `
         <div class="text-xs text-slate-400 text-center py-2 bg-white/80 rounded border border-dashed border-amber-300">
-          ยังไม่มีไฟล์แนบ — กด "📷 แนบรูป" หรือ "🎥 แนบวิดีโอสั้น" เพื่อเก็บภาพกระดาษสั่งงานหรือคลิปหน้างาน
+          ยังไม่มีไฟล์แนบ — กด "📷 แนบรูป", "📄 แนบ PDF", "🎥 วิดีโอ" หรือกด <span class="font-semibold text-slate-600">Ctrl+V</span> เพื่อวางรูปภาพที่ Copy ไว้
         </div>
       `;
       return;
@@ -882,13 +905,16 @@
 
     container.innerHTML = draftAttachments.map((att, idx) => {
       const isVideo = att.media_kind === 'video' || (att.type && att.type.startsWith('video/'));
+      const isPdf = att.media_kind === 'pdf' || (att.type && att.type.includes('pdf')) || String(att.name).toLowerCase().endsWith('.pdf');
+      const icon = isVideo ? '🎥' : (isPdf ? '📄' : '📷');
+      const kindLabel = isVideo ? 'วิดีโอสั้น' : (isPdf ? 'เอกสาร PDF' : 'รูปภาพ');
       return `
         <div class="flex items-center justify-between gap-2 p-2 bg-white rounded border border-amber-200 text-xs">
           <div class="flex items-center gap-2 truncate">
-            <span class="text-base">${isVideo ? '🎥' : '📷'}</span>
+            <span class="text-base">${icon}</span>
             <div class="truncate">
               <div class="font-medium text-slate-700 truncate">${escapeHtml(att.name || 'ไฟล์แนบ')}</div>
-              <div class="text-[11px] text-slate-400">${isVideo ? 'วิดีโอสั้น' : 'รูปภาพ'} • ${formatSize(att.size)}</div>
+              <div class="text-[11px] text-slate-400">${kindLabel} • ${formatSize(att.size)}</div>
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
@@ -930,16 +956,18 @@
 
     for (const file of Array.from(fileList)) {
       if (file.size > maxBytes) {
-        if (UTILS.toast) UTILS.toast(`ไฟล์ "${file.name}" มีขนาดเกิน 50 MB กรุณาใช้คลิปสั้นลง`, 'error');
+        if (UTILS.toast) UTILS.toast(`ไฟล์ "${file.name}" มีขนาดเกิน 50 MB กรุณาใช้ไฟล์ที่เล็กลง`, 'error');
         else alert(`ไฟล์ "${file.name}" มีขนาดเกิน 50 MB`);
         continue;
       }
 
       const isVideo = (file.type && file.type.startsWith('video/')) || defaultKind === 'video';
+      const isPdf = (file.type && (file.type === 'application/pdf' || file.type.includes('pdf'))) || String(file.name).toLowerCase().endsWith('.pdf') || defaultKind === 'pdf';
       let rawData = file;
+      const mediaKind = isVideo ? 'video' : (isPdf ? 'pdf' : 'image');
 
-      // สำหรับรูปภาพ หากมีฟังก์ชันบีบอัดรูปให้บีบอัดเพื่อประหยัดพื้นที่
-      if (!isVideo && typeof UTILS.compressImage === 'function') {
+      // สำหรับรูปภาพ หากมีฟังก์ชันบีบอัดรูปให้บีบอัดเพื่อประหยัดพื้นที่ (PDF และ Video ไม่ต้องบีบอัด)
+      if (mediaKind === 'image' && typeof UTILS.compressImage === 'function') {
         try {
           rawData = await UTILS.compressImage(file);
         } catch (_) {
@@ -947,12 +975,16 @@
         }
       }
 
+      let fallbackName = 'image.jpg';
+      if (mediaKind === 'video') fallbackName = 'video.mp4';
+      else if (mediaKind === 'pdf') fallbackName = 'document.pdf';
+
       draftAttachments.push({
         id: 'med_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-        name: file.name || (isVideo ? 'video.mp4' : 'image.jpg'),
-        type: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
-        media_kind: isVideo ? 'video' : 'image',
-        size: file.size || 0,
+        name: file.name || fallbackName,
+        type: file.type || (mediaKind === 'video' ? 'video/mp4' : (mediaKind === 'pdf' ? 'application/pdf' : 'image/jpeg')),
+        media_kind: mediaKind,
+        size: file.size || (rawData.size || 0),
         isNew: true,
         rawData
       });
@@ -986,12 +1018,25 @@
     }
 
     const isVideo = mediaKind === 'video' || (mimeType && mimeType.startsWith('video/'));
+    const isPdf = mediaKind === 'pdf' || (mimeType && mimeType.includes('pdf')) || String(name).toLowerCase().endsWith('.pdf');
+
     if (isVideo) {
       bodyEl.innerHTML = `
         <video controls autoplay class="max-h-[70vh] max-w-full rounded shadow-lg bg-black">
           <source src="${escapeHtml(srcUrl)}" type="${escapeHtml(mimeType || 'video/mp4')}">
           เบราว์เซอร์ของคุณไม่รองรับการเล่นวิดีโอ
         </video>
+      `;
+    } else if (isPdf) {
+      bodyEl.innerHTML = `
+        <div class="w-full flex flex-col items-center gap-2">
+          <div class="w-full flex justify-end">
+            <a href="${escapeHtml(srcUrl)}" target="_blank" download="${escapeHtml(name || 'document.pdf')}" class="btn btn-primary btn-sm text-xs inline-flex items-center gap-1 shadow">
+              ⬇️ ดาวน์โหลด / เปิดแท็บใหม่
+            </a>
+          </div>
+          <iframe src="${escapeHtml(srcUrl)}" class="w-full h-[68vh] rounded border border-slate-700 bg-white shadow-lg"></iframe>
+        </div>
       `;
     } else {
       bodyEl.innerHTML = `
@@ -1453,7 +1498,7 @@
       });
     }
 
-    // ปุ่มแนบรูปภาพและวิดีโอสั้น
+    // ปุ่มแนบรูปภาพ ไฟล์ PDF และวิดีโอสั้น
     const btnAttachPhoto = document.getElementById('btn-attach-photo');
     const inputAttachPhoto = document.getElementById('input-attach-photo');
     if (btnAttachPhoto && inputAttachPhoto) {
@@ -1464,6 +1509,68 @@
       });
     }
 
+    // ปุ่ม "📋 วางรูปที่ Copy" (อ่านจากคลิปบอร์ดตรงๆ ทันที)
+    const btnAttachPaste = document.getElementById('btn-attach-paste');
+    if (btnAttachPaste) {
+      btnAttachPaste.addEventListener('click', async () => {
+        if (!navigator.clipboard) {
+          if (UTILS.toast) UTILS.toast('เบราว์เซอร์ไม่รองรับการอ่านคลิปบอร์ด กรุณาใช้ปุ่ม "📷 แนบรูป" แทน', 'warning');
+          return;
+        }
+
+        try {
+          if (navigator.clipboard.read) {
+            const clipItems = await navigator.clipboard.read();
+            const pastedFiles = [];
+
+            for (const item of clipItems) {
+              const imgType = item.types.find(t => t.startsWith('image/'));
+              if (imgType) {
+                const blob = await item.getType(imgType);
+                const timeTag = new Date().toISOString().slice(11, 19).replace(/:/g, '');
+                const ext = imgType.includes('png') ? 'png' : 'jpg';
+                const file = new File([blob], `clipboard_${timeTag}.${ext}`, { type: imgType });
+                pastedFiles.push(file);
+              }
+            }
+
+            if (pastedFiles.length > 0) {
+              await handleFilesSelected(pastedFiles, 'image');
+              if (UTILS.toast) UTILS.toast(`📋 วางรูปภาพที่ Copy เรียบร้อย (${pastedFiles.length} รูป)`, 'success');
+              return;
+            }
+          }
+
+          if (UTILS.toast) {
+            UTILS.toast('ไม่พบรูปภาพในคลิปบอร์ด — กรุณา Copy รูปภาพ หรือแคปหน้าจอก่อนกดปุ่มนี้', 'error');
+          } else {
+            alert('ไม่พบรูปภาพในคลิปบอร์ด — กรุณา Copy รูปภาพก่อนกดปุ่มนี้');
+          }
+        } catch (err) {
+          console.warn('Clipboard read error:', err);
+          if (err.name === 'NotAllowedError' || String(err).includes('permission')) {
+            if (UTILS.toast) {
+              UTILS.toast('เบราว์เซอร์ต้องการสิทธิ์เข้าถึงคลิปบอร์ด — กรุณากด "อนุญาต (Allow)" ในเบราว์เซอร์', 'warning');
+            }
+          } else {
+            if (UTILS.toast) {
+              UTILS.toast('ไม่สามารถอ่านคลิปบอร์ดได้: ' + err.message, 'error');
+            }
+          }
+        }
+      });
+    }
+
+    const btnAttachPdf = document.getElementById('btn-attach-pdf');
+    const inputAttachPdf = document.getElementById('input-attach-pdf');
+    if (btnAttachPdf && inputAttachPdf) {
+      btnAttachPdf.addEventListener('click', () => inputAttachPdf.click());
+      inputAttachPdf.addEventListener('change', async (e) => {
+        await handleFilesSelected(e.target.files, 'pdf');
+        inputAttachPdf.value = '';
+      });
+    }
+
     const btnAttachVideo = document.getElementById('btn-attach-video');
     const inputAttachVideo = document.getElementById('input-attach-video');
     if (btnAttachVideo && inputAttachVideo) {
@@ -1471,6 +1578,74 @@
       inputAttachVideo.addEventListener('change', async (e) => {
         await handleFilesSelected(e.target.files, 'video');
         inputAttachVideo.value = '';
+      });
+    }
+
+    // รองรับการวางรูปภาพจากคลิปบอร์ด (Ctrl+V) เมื่อเปิดหน้าต่างสั่งงาน
+    document.addEventListener('paste', async (e) => {
+      const modal = document.getElementById('modal-task');
+      if (!modal || modal.classList.contains('hidden')) return;
+
+      const pastedFiles = [];
+
+      // ตรวจสอบทั้ง e.clipboardData.files (ไฟล์ที่ copy มา) และ e.clipboardData.items
+      if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+        for (const file of Array.from(e.clipboardData.files)) {
+          if (file.type && (file.type.startsWith('image/') || file.type.includes('pdf'))) {
+            pastedFiles.push(file);
+          }
+        }
+      }
+
+      if (!pastedFiles.length && e.clipboardData?.items) {
+        for (let i = 0; i < e.clipboardData.items.length; i++) {
+          const item = e.clipboardData.items[i];
+          if (item.type && item.type.indexOf('image') !== -1) {
+            const blob = item.getAsFile();
+            if (blob) {
+              const timeTag = new Date().toISOString().slice(11, 19).replace(/:/g, '');
+              const pastedFile = new File([blob], `screenshot_${timeTag}.png`, { type: blob.type || 'image/png' });
+              pastedFiles.push(pastedFile);
+            }
+          } else if (item.type === 'application/pdf') {
+            const blob = item.getAsFile();
+            if (blob) pastedFiles.push(blob);
+          }
+        }
+      }
+
+      if (pastedFiles.length > 0) {
+        e.preventDefault();
+        await handleFilesSelected(pastedFiles, 'image');
+        if (UTILS.toast) {
+          UTILS.toast(`📋 วางรูปภาพจากคลิปบอร์ดเรียบร้อย (${pastedFiles.length} รูป)`, 'success');
+        }
+      }
+    });
+
+    // รองรับ Drag & Drop ลากไฟล์รูป/PDF มาวางในกรอบแนบไฟล์
+    const dropzone = document.getElementById('task-attachments-dropzone');
+    if (dropzone) {
+      ['dragenter', 'dragover'].forEach(evtName => {
+        dropzone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/60');
+        });
+      });
+      ['dragleave', 'drop'].forEach(evtName => {
+        dropzone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/60');
+        });
+      });
+      dropzone.addEventListener('drop', async (e) => {
+        const dt = e.dataTransfer;
+        if (dt && dt.files && dt.files.length > 0) {
+          await handleFilesSelected(dt.files, 'image');
+          if (UTILS.toast) UTILS.toast(`📥 เพิ่มไฟล์แนบ ${dt.files.length} รายการเรียบร้อย`, 'success');
+        }
       });
     }
 

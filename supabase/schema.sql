@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS public.workers (
     full_name TEXT NOT NULL,
     daily_wage NUMERIC(10, 2) NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive')),
+    role TEXT NOT NULL DEFAULT 'Worker' CHECK (role IN ('Supervisor', 'Worker')),
+    gender TEXT NOT NULL DEFAULT 'M' CHECK (gender IN ('M', 'F')),
+    base_age INTEGER NOT NULL DEFAULT 30,
+    registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

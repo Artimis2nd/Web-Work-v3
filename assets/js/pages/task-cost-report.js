@@ -320,7 +320,7 @@
                 <span>รายการงานย่อยและปริมาณงานทำจริง (Sub-items & As-Built Quantities)</span>
               </div>
               <span class="text-xs text-slate-500 font-mono">
-                เสร็จแล้ว ${task.sub_items.filter(s => s.status === 'Completed' || Number(s.percent) >= 100).length}/${task.sub_items.filter(s => s.status !== 'Cancelled').length} รายการ
+                เสร็จแล้ว ${task.sub_items.filter(s => s.status === 'Completed' || (Number(s.progress_percent ?? s.percent) >= 100)).length}/${task.sub_items.filter(s => s.status !== 'Cancelled').length} รายการ
               </span>
             </div>
             <div class="overflow-x-auto rounded-lg border border-slate-200">
@@ -338,17 +338,18 @@
                 <tbody>
                   ${task.sub_items.map((item, idx) => {
                     const hasTarget = item.target_qty !== null && item.target_qty !== undefined && item.target_qty !== '' && Number(item.target_qty) > 0;
-                    const doneVal = Number(item.done_qty) || 0;
+                    const doneVal = Number(item.actual_qty ?? item.done_qty) || 0;
+                    const pctVal = Number(item.progress_percent ?? item.percent) || 0;
                     const unitStr = item.unit ? ` ${Utils.escapeHtml(item.unit)}` : '';
                     const isCancelled = item.status === 'Cancelled';
                     const isBlocked = item.status === 'Blocked';
-                    const isDone = item.status === 'Completed' || Number(item.percent) >= 100;
+                    const isDone = item.status === 'Completed' || pctVal >= 100;
                     return `
                       <tr class="${isCancelled ? 'opacity-50 line-through bg-slate-50' : isBlocked ? 'bg-red-50/60' : ''}">
                         <td class="text-center font-mono text-slate-500">${idx + 1}</td>
                         <td class="font-semibold text-slate-800">
                           ${Utils.escapeHtml(item.name || '-')}
-                          ${item.issue ? `<div class="text-[11px] text-red-600 font-normal mt-0.5">⚠️ ติดปัญหา: ${Utils.escapeHtml(item.issue)}</div>` : ''}
+                          ${(item.issue_note || item.issue) ? `<div class="text-[11px] text-red-600 font-normal mt-0.5">⚠️ ติดปัญหา: ${Utils.escapeHtml(item.issue_note || item.issue)}</div>` : ''}
                         </td>
                         <td class="text-right font-mono font-bold ${doneVal > 0 ? 'text-blue-700' : 'text-slate-400'}">
                           ${doneVal > 0 ? `${doneVal}${unitStr}` : `-`}
@@ -357,7 +358,7 @@
                           ${hasTarget ? `${Number(item.target_qty)}${unitStr}` : '<span class="text-slate-400 italic">วัดหน้างานจริง</span>'}
                         </td>
                         <td class="text-center font-mono font-semibold">
-                          ${isCancelled ? '-' : `${Number(item.percent) || 0}%`}
+                          ${isCancelled ? '-' : `${pctVal}%`}
                         </td>
                         <td class="text-center">
                           ${Utils.renderTaskStatusBadge(item.status || (isDone ? 'Completed' : 'Pending'))}

@@ -376,7 +376,189 @@ const Utils = (() => {
     document.getElementById('mobile-db-settings-btn')?.addEventListener('click', openDbSettingsModal);
     document.getElementById('status-badge')?.addEventListener('click', openDbSettingsModal);
 
-    setTimeout(checkStatus, 100);
+    setTimeout(() => {
+      checkStatus();
+      initOfflinePcIntegration();
+    }, 100);
+  }
+
+  // ============================================================
+  // OFFLINE PC INTEGRATION & TOP BANNER
+  // ============================================================
+  async function initOfflinePcIntegration() {
+    if (typeof Api === 'undefined' || typeof Api.checkOfflineMode !== 'function') return;
+    const offlineInfo = await Api.checkOfflineMode();
+    if (!offlineInfo || !offlineInfo.is_offline_mode) return;
+
+    // แทรก Offline Top Banner ด้านบนสุด
+    const shell = document.getElementById('app-shell');
+    if (!shell || document.getElementById('offline-pc-banner')) return;
+
+    const activeName = offlineInfo.active_folder || offlineInfo.active_summary?.fileName || 'ยังไม่ได้เลือกงวดงาน';
+    const banner = document.createElement('div');
+    banner.id = 'offline-pc-banner';
+    banner.style.cssText = 'background: linear-gradient(90deg, #1e1b4b 0%, #312e81 100%); border-bottom: 2px solid #6366f1;';
+    banner.className = 'text-white px-4 py-2.5 text-xs flex items-center justify-between gap-3 flex-wrap sticky top-0 z-40 shadow-md';
+    banner.innerHTML = `
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="font-semibold text-indigo-200">💻 โหมดจัดการงวดงานย้อนหลังออฟไลน์บน PC:</span>
+        <span id="offline-active-name" class="font-mono bg-indigo-950/80 px-2.5 py-1 rounded border border-indigo-400/40 text-emerald-300 font-semibold">${Utils.escapeHtml(activeName)}</span>
+        <span class="text-indigo-300 text-[11px]">(แก้ไขงาน/ออกรายงานย้อนหลังได้อย่างอิสระ ไม่กระทบข้อมูลบนเว็บ)</span>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <button type="button" id="offline-switch-btn" class="btn btn-outline btn-sm text-white border-white/30 hover:bg-white/10 text-[11px] py-1 px-3">📂 สลับงวดงาน</button>
+        <button type="button" id="offline-save-pc-btn" class="btn btn-primary btn-sm bg-emerald-600 hover:bg-emerald-500 border-none text-[11px] py-1 px-3 font-semibold">💾 บันทึกการแก้ไขลง PC</button>
+        <button type="button" id="offline-zip-pc-btn" class="btn btn-outline btn-sm text-white border-white/30 hover:bg-white/10 text-[11px] py-1 px-3">📦 ส่งออกเป็น .zip</button>
+      </div>
+    `;
+    shell.insertBefore(banner, shell.firstChild);
+
+    // ปรับ Badge สถานะ
+    const statusBadge = document.getElementById('status-badge');
+    if (statusBadge) {
+      statusBadge.className = 'status-badge status-online cursor-pointer bg-indigo-50 border-indigo-300 text-indigo-900';
+      statusBadge.innerHTML = '💻 โหมด PC ออฟไลน์ (อิสระ)';
+      statusBadge.title = 'ทำงานแบบออฟไลน์บน PC ไม่กระทบเว็บออนไลน์';
+    }
+
+    // ปรับปุ่มตั้งค่าใน Sidebar
+    const dbBtn = document.getElementById('sidebar-db-settings-btn');
+    if (dbBtn) {
+      dbBtn.innerHTML = `<span>💻</span><span>งวดงาน PC: ${Utils.escapeHtml(activeName.slice(0, 15))}</span>`;
+      dbBtn.title = 'คลิกเพื่อสลับงวดงานหรือดูประวัติบน PC';
+      dbBtn.onclick = (e) => { e.preventDefault(); openOfflineSwitchModal(); };
+    }
+
+    // ปุ่มสลับงวดงาน
+    document.getElementById('offline-switch-btn')?.addEventListener('click', openOfflineSwitchModal);
+
+    // ปุ่มบันทึกลง PC
+    const saveBtn = document.getElementById('offline-save-pc-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        try {
+          const res = await Utils.animateProgress(
+            saveBtn,
+            Api.saveOfflineCurrentState(),
+            'กำลังบันทึกลง PC...',
+            '✅ บันทึกสำเร็จ'
+          );
+          Utils.toast(`บันทึกการแก้ไขลงโฟลเดอร์บน PC เรียบร้อย (${res.result?.folder || ''})`, 'success');
+          setTimeout(() => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '💾 บันทึกการแก้ไขลง PC';
+          }, 1200);
+        } catch (err) {
+          Utils.toast(err.message, 'error');
+        }
+      });
+    }
+
+    // ปุ่มส่งออก ZIP
+    const zipBtn = document.getElementById('offline-zip-pc-btn');
+    if (zipBtn) {
+      zipBtn.addEventListener('click', async () => {
+        try {
+          const res = await Utils.animateProgress(
+            zipBtn,
+            Api.exportOfflineCurrentZip(),
+            'กำลังแพ็กไฟล์ .zip...',
+            '✅ สำเร็จ'
+          );
+          Utils.toast(`แพ็กไฟล์สำเร็จ: pc_backups/${res.zipName}`, 'success');
+          setTimeout(() => {
+            zipBtn.disabled = false;
+            zipBtn.innerHTML = '📦 ส่งออกเป็น .zip';
+          }, 1200);
+        } catch (err) {
+          Utils.toast(err.message, 'error');
+        }
+      });
+    }
+  }
+
+  async function openOfflineSwitchModal() {
+    const backdrop = document.createElement('div');
+    backdrop.id = 'backup-modal-backdrop';
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="modal-box" style="max-width:680px">
+        <div class="modal-header">
+          <h3 class="font-display text-lg font-semibold">📂 เลือกงวดงานที่จะจัดการบน PC (pc_backups/)</h3>
+          <button id="modal-close-btn" class="btn btn-outline btn-sm">✕ ปิด</button>
+        </div>
+        <div id="offline-modal-body" class="modal-body space-y-3">
+          <div class="text-center py-6" style="color:var(--ink-soft)">กำลังโหลดรายชื่องวดงานในเครื่อง...</div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    const closeModal = () => backdrop.remove();
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+    document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+
+    const body = document.getElementById('offline-modal-body');
+    try {
+      const info = await Api.checkOfflineMode();
+      const list = info?.backups || [];
+      if (!list.length) {
+        body.innerHTML = `
+          <div class="p-4 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-2">
+            <div class="font-semibold">⚠️ ยังไม่พบโฟลเดอร์หรือไฟล์ Backup ใน pc_backups/</div>
+            <div>วิธีเริ่มใช้งาน:</div>
+            <div>1. ดาวน์โหลดไฟล์ .zip จากเว็บจริง (กดปุ่ม <strong>"💾 Backup ไฟล์"</strong> บนเว็บ) แล้วนำมาวางในโฟลเดอร์ <code>pc_backups/</code></div>
+            <div>2. หรือเปิดหน้านี้เพื่อเริ่มแก้ไข แล้วกดปุ่ม <strong>"💾 บันทึกการแก้ไขลง PC"</strong> ระบบจะสร้างโฟลเดอร์งวดงานให้อัตโนมัติ</div>
+          </div>
+        `;
+        return;
+      }
+
+      body.innerHTML = `
+        <div class="text-xs text-slate-600 mb-2">คลิกเลือกงวดงานที่ต้องการเปิดดูและแก้ไข (จะดึงข้อมูลมาแสดงบนหน้าเว็บแบบออฟไลน์ทันที):</div>
+        <div class="space-y-2 max-h-72 overflow-y-auto">
+          ${list.map(item => `
+            <div class="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-indigo-400 bg-white transition-colors gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span>${item.type === 'folder' ? '📁' : '📦'}</span>
+                  <strong class="text-slate-800 text-sm truncate">${Utils.escapeHtml(item.name)}</strong>
+                  ${item.name === info.active_folder ? '<span class="badge badge-success text-[10px]">กำลังเปิดอยู่</span>' : ''}
+                </div>
+                <div class="text-[11px] text-slate-500 mt-0.5">
+                  ${item.type === 'folder' ? `รูปภาพ ${item.images_count} รูป` : `ขนาด ${Utils.formatFileSize(item.size)}`}
+                  • แก้ไขล่าสุด: ${new Date(item.modified * 1000).toLocaleString('th-TH')}
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm shrink-0 offline-load-item-btn" data-type="${item.type}" data-name="${Utils.escapeHtml(item.name)}">
+                ${item.name === info.active_folder ? '🔄 โหลดใหม่' : '📂 เปิดงวดนี้'}
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+
+      body.querySelectorAll('.offline-load-item-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const type = btn.getAttribute('data-type');
+          const name = btn.getAttribute('data-name');
+          btn.disabled = true;
+          btn.textContent = 'กำลังโหลด...';
+          try {
+            await Api.loadOfflineFolderData(type === 'folder' ? { folder: name } : { zip: name });
+            Utils.toast(`โหลดงวดงานสำเร็จ: ${name}`, 'success');
+            closeModal();
+            window.location.reload();
+          } catch (err) {
+            Utils.toast(err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = '📂 เปิดงวดนี้';
+          }
+        });
+      });
+    } catch (err) {
+      body.innerHTML = `<div class="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded">${Utils.escapeHtml(err.message)}</div>`;
+    }
   }
 
   async function checkStatus() {
