@@ -172,14 +172,20 @@ const Api = (() => {
       }
     }
 
-    // หากยังไม่มีใบงานในเครื่อง ให้โหลดข้อมูลจริง 15 ใบงาน (85 แถวคนงาน) พร้อมรูปภาพเข้าทันที
-    if (!existingLogs || existingLogs.length === 0) {
+    // หากยังไม่มีใบงานในเครื่อง (เพิ่งเปิดใช้งานครั้งแรก) ให้โหลดข้อมูลจริง 15 ใบงาน (85 แถวคนงาน) พร้อมรูปภาพเข้าทันที
+    if (existingLogs === null) {
       if (seed && Array.isArray(seed.rawLogs) && seed.rawLogs.length > 0) {
         writeLocal(LOCAL_KEYS.LOGS, seed.rawLogs.map(mapLogRowFromDb));
         if (seed.imagesData) {
           writeLocal(LOCAL_KEYS.IMAGES, seed.imagesData);
         }
       }
+    }
+
+    // หากยังไม่มีใบสั่งงานในเครื่อง (เพิ่งเปิดใช้งานครั้งแรก) ให้โหลดใบสั่งงานตั้งต้นจาก seed-data.js
+    const existingTasks = readLocal(LOCAL_KEYS.TASKS, null);
+    if (existingTasks === null && seed && Array.isArray(seed.tasks) && seed.tasks.length > 0) {
+      writeLocal(LOCAL_KEYS.TASKS, seed.tasks);
     }
   }
 
@@ -281,6 +287,7 @@ const Api = (() => {
       return (rows || []).map(mapLogRowFromDb);
     }
 
+    ensureLocalSeed();
     let logs = readLocal(LOCAL_KEYS.LOGS, []);
     if (filters.startDate) logs = logs.filter(r => (r.Date || r.work_date) >= filters.startDate);
     if (filters.endDate) logs = logs.filter(r => (r.Date || r.work_date) <= filters.endDate);
@@ -456,13 +463,19 @@ const Api = (() => {
   }
 
   async function getDashboard() {
-    const [workers, logs] = await Promise.all([fetchAllWorkers(), fetchAllLogRows()]);
+    const [workers, logs, tasks] = await Promise.all([
+      fetchAllWorkers(),
+      fetchAllLogRows(),
+      getTasks().catch(() => [])
+    ]);
     const totalWorkers = workers.filter(w => w.Status === 'Active').length;
+    const taskMap = new Map((tasks || []).map(t => [String(t.id), t]));
     const groups = {};
 
     logs.forEach(row => {
       const gid = row.GroupID;
       if (!gid) return;
+      const rowTaskId = row.TaskId != null ? Number(row.TaskId) : (row.task_id != null ? Number(row.task_id) : null);
       if (!groups[gid]) {
         groups[gid] = {
           groupId: gid,
@@ -470,6 +483,7 @@ const Api = (() => {
           site: row.Site,
           jobDetail: row.JobDetail,
           requestedBy: row.RequestedBy,
+          taskId: rowTaskId,
           workers: [],
           totalRaw: 0,
           totalNormal: 0,
@@ -479,6 +493,7 @@ const Api = (() => {
       }
       if (!groups[gid].jobDetail && row.JobDetail) groups[gid].jobDetail = row.JobDetail;
       if (!groups[gid].requestedBy && row.RequestedBy) groups[gid].requestedBy = row.RequestedBy;
+      if (groups[gid].taskId == null && rowTaskId != null) groups[gid].taskId = rowTaskId;
 
       const g = groups[gid];
       g.workers.push(row.WorkerName);
@@ -500,16 +515,22 @@ const Api = (() => {
       totalFixedWage += g.totalFixed;
     });
 
-    const recentGroups = groupList.slice(0, 50).map(g => ({
-      groupId: g.groupId,
-      date: g.date,
-      site: g.site,
-      jobDetail: g.jobDetail,
-      requestedBy: g.requestedBy,
-      workerCount: g.workers.length,
-      totalNormal: g.totalNormal,
-      totalFixed: g.totalFixed
-    }));
+    const recentGroups = groupList.slice(0, 50).map(g => {
+      const linkedTask = g.taskId != null ? taskMap.get(String(g.taskId)) : null;
+      return {
+        groupId: g.groupId,
+        date: g.date,
+        site: g.site,
+        jobDetail: g.jobDetail,
+        requestedBy: g.requestedBy,
+        taskId: g.taskId != null ? g.taskId : null,
+        taskCode: linkedTask ? (linkedTask.task_code || `TSK-${linkedTask.id}`) : null,
+        taskTitle: linkedTask ? (linkedTask.title || '') : null,
+        workerCount: g.workers.length,
+        totalNormal: g.totalNormal,
+        totalFixed: g.totalFixed
+      };
+    });
 
     return {
       totalWorkers,
@@ -621,17 +642,33 @@ const Api = (() => {
 
   async function deleteLogGroup(payload) {
     const groupId = payload.groupId;
+    const groupRows = await fetchAllLogRows({ groupId }).catch(() => []);
+    const linkedTaskId = groupRows.length > 0
+      ? (groupRows[0].TaskId != null ? Number(groupRows[0].TaskId) : (groupRows[0].task_id != null ? Number(groupRows[0].task_id) : null))
+      : null;
+    const linkedWorkDate = groupRows.length > 0 ? String(groupRows[0].Date || groupRows[0].work_date || '').slice(0, 10) : '';
+
     if (isCloudConfigured()) {
       await sbFetch(`/rest/v1/daily_logs?group_id=eq.${encodeURIComponent(groupId)}`, { method: 'DELETE' });
       await sbFetch(`/rest/v1/log_images?group_id=eq.${encodeURIComponent(groupId)}`, { method: 'DELETE' });
-      return { deleted: true };
+    } else {
+      const existing = readLocal(LOCAL_KEYS.LOGS, []).filter(r => String(r.GroupID || r.group_id) !== String(groupId));
+      writeLocal(LOCAL_KEYS.LOGS, existing);
+      const imgMap = readLocal(LOCAL_KEYS.IMAGES, {});
+      delete imgMap[groupId];
+      writeLocal(LOCAL_KEYS.IMAGES, imgMap);
     }
-    const existing = readLocal(LOCAL_KEYS.LOGS, []).filter(r => String(r.GroupID || r.group_id) !== String(groupId));
-    writeLocal(LOCAL_KEYS.LOGS, existing);
-    const imgMap = readLocal(LOCAL_KEYS.IMAGES, {});
-    delete imgMap[groupId];
-    writeLocal(LOCAL_KEYS.IMAGES, imgMap);
-    return { deleted: true };
+
+    let revertedTask = null;
+    if (linkedTaskId != null) {
+      try {
+        revertedTask = await revertTaskProgressOnLogDelete(linkedTaskId, groupId, linkedWorkDate);
+      } catch (err) {
+        console.warn('ไม่สามารถคืนค่าความคืบหน้าใบสั่งงานเมื่อลบใบงาน:', err);
+      }
+    }
+
+    return { deleted: true, revertedTask };
   }
 
   async function getLogGroup(payload) {
@@ -1420,8 +1457,18 @@ const Api = (() => {
     const dateStr = progressInfo.date || now.slice(0, 10);
     const resolution = progressInfo.resolution !== undefined ? String(progressInfo.resolution) : '';
     const by = progressInfo.by !== undefined ? String(progressInfo.by) : '';
+    const groupId = progressInfo.groupId || progressInfo.group_id || null;
 
-    let currentSubItems = Array.isArray(task.sub_items) ? [...task.sub_items] : [];
+    // เก็บค่าก่อนอัปเดตไว้สำหรับกรณีลบใบรายงานประจำวันออกในภายหลัง
+    const prevSubItems = Array.isArray(task.sub_items)
+      ? task.sub_items.map(it => ({ ...it }))
+      : [];
+    const prevPercent = Number(task.progress_percent) || 0;
+    const prevStatus = task.status || 'Pending';
+    const prevIssues = task.issues || '';
+    const prevResolution = task.resolution || '';
+
+    let currentSubItems = prevSubItems.map(it => ({ ...it }));
     const subItemChangesSummary = [];
 
     // 1. อัปเดตยอดทำจริง/สถานะ/เป้าหมาย ของรายการงานย่อยเดิม (จากหน้าบันทึกรายวัน)
@@ -1429,6 +1476,13 @@ const Api = (() => {
       currentSubItems = currentSubItems.map(item => {
         const upd = progressInfo.sub_items_updates.find(u => String(u.id) === String(item.id) || (u.name && u.name === item.name));
         if (!upd) return item;
+
+        const prevItemState = {
+          actual_qty: Number(item.actual_qty) || 0,
+          progress_percent: Number(item.progress_percent) || 0,
+          status: item.status || 'Pending',
+          issue_note: item.issue_note || ''
+        };
 
         const nextItem = { ...item };
         if (upd.target_qty !== undefined) {
@@ -1459,7 +1513,12 @@ const Api = (() => {
           target_qty: nextItem.target_qty,
           unit: nextItem.unit,
           status: nextItem.status,
-          issue_note: nextItem.issue_note
+          progress_percent: nextItem.progress_percent,
+          issue_note: nextItem.issue_note,
+          prev_actual_qty: prevItemState.actual_qty,
+          prev_progress_percent: prevItemState.progress_percent,
+          prev_status: prevItemState.status,
+          prev_issue_note: prevItemState.issue_note
         });
 
         return nextItem;
@@ -1490,6 +1549,7 @@ const Api = (() => {
           target_qty: addedItem.target_qty,
           unit: addedItem.unit,
           status: addedItem.status,
+          progress_percent: addedItem.progress_percent,
           issue_note: addedItem.issue_note,
           added_from_log: true
         });
@@ -1513,12 +1573,19 @@ const Api = (() => {
     }
 
     const newHistoryEntry = {
+      group_id: groupId || undefined,
       date: dateStr,
       percent: percentNum,
+      status,
       issues: progressInfo.issues !== undefined ? String(progressInfo.issues) : issues,
       resolution,
       by,
       sub_items_snapshot: subItemChangesSummary.length > 0 ? subItemChangesSummary : undefined,
+      prev_percent: prevPercent,
+      prev_status: prevStatus,
+      prev_issues: prevIssues,
+      prev_resolution: prevResolution,
+      prev_sub_items: prevSubItems,
       created_at: now
     };
 
@@ -1535,6 +1602,200 @@ const Api = (() => {
     };
 
     return updateTask(id, updates);
+  }
+
+  /**
+   * คืนค่าความคืบหน้า (%) ปริมาณงาน และสถานะงานของรายการย่อยและใบสั่งงาน
+   * เมื่อมีการลบใบรายงานประจำวันที่เคยผูกกับใบสั่งงานนี้ออก
+   */
+  async function revertTaskProgressOnLogDelete(taskId, groupId, workDate) {
+    const task = await getTaskById(taskId);
+    if (!task) return null;
+
+    const remainingTaskLogs = await fetchAllLogRows({ taskId }).catch(() => []);
+    const history = Array.isArray(task.progress_history) ? [...task.progress_history] : [];
+
+    // 1. ค้นหาประวัติการอัปเดตที่เกิดจากใบรายงานประจำวันใบที่ถูกลบ
+    let matchedIndices = [];
+    if (groupId) {
+      history.forEach((h, idx) => {
+        if (h && h.group_id && String(h.group_id) === String(groupId)) {
+          matchedIndices.push(idx);
+        }
+      });
+    }
+
+    // กรณีเป็นข้อมูลเก่าที่ยังไม่มี group_id ใน progress_history ให้จับคู่ตามวันที่ของใบงาน
+    if (matchedIndices.length === 0 && workDate) {
+      const hasOtherLogsOnSameDate = remainingTaskLogs.some(
+        l => String(l.Date || l.work_date || '').slice(0, 10) === workDate
+      );
+      const sameDateIndices = [];
+      history.forEach((h, idx) => {
+        if (h && String(h.date || '').slice(0, 10) === workDate) {
+          sameDateIndices.push(idx);
+        }
+      });
+      if (sameDateIndices.length > 0) {
+        if (!hasOtherLogsOnSameDate) {
+          // ไม่มีใบงานอื่นของวันที่นี้เหลืออยู่แล้ว -> ลบประวัติของวันนั้นออกทั้งหมด
+          matchedIndices = sameDateIndices;
+        } else {
+          // ยังมีใบงานอื่นในวันเดียวกัน -> ถอดเฉพาะรายการล่าสุดของวันนั้น
+          matchedIndices = [sameDateIndices[sameDateIndices.length - 1]];
+        }
+      }
+    }
+
+    const removedSet = new Set(matchedIndices);
+    const removedEntries = history.filter((_, idx) => removedSet.has(idx));
+    const keptHistory = history.filter((_, idx) => !removedSet.has(idx));
+
+    // กรณีลบใบงานล่าสุด และมี prev_sub_items บันทึกไว้ครบถ้วน
+    const isRemovingTailOnly = matchedIndices.length > 0 &&
+      matchedIndices[matchedIndices.length - 1] === history.length - 1 &&
+      matchedIndices.every((val, i) => i === 0 || val === matchedIndices[i - 1] + 1);
+
+    if (isRemovingTailOnly && Array.isArray(removedEntries[0]?.prev_sub_items)) {
+      const firstRemoved = removedEntries[0];
+      const restoredSubItems = normalizeSubItems(firstRemoved.prev_sub_items);
+      return updateTask(taskId, {
+        sub_items: restoredSubItems,
+        progress_history: keptHistory,
+        progress_percent: firstRemoved.prev_percent !== undefined ? Number(firstRemoved.prev_percent) : 0,
+        status: firstRemoved.prev_status || 'Pending',
+        issues: firstRemoved.prev_issues !== undefined ? firstRemoved.prev_issues : '',
+        resolution: firstRemoved.prev_resolution !== undefined ? firstRemoved.prev_resolution : ''
+      });
+    }
+
+    // กรณีลบใบงานจนไม่เหลือทั้งใบงานรายวันและไม่เหลือประวัติความคืบหน้าเลย (และไม่มีวันสะสมจากงวดก่อน)
+    let currentSubItems = Array.isArray(task.sub_items) ? task.sub_items.map(it => ({ ...it })) : [];
+
+    // ถอดรายการย่อยที่เคยเพิ่มหน้างาน (added_from_log) จากใบงานที่ถูกลบออก
+    const addedFromLogIdsToRemove = new Set();
+    removedEntries.forEach(entry => {
+      (entry.sub_items_snapshot || []).forEach(snap => {
+        if (snap && snap.added_from_log) {
+          addedFromLogIdsToRemove.add(String(snap.id));
+        }
+      });
+    });
+    if (addedFromLogIdsToRemove.size > 0) {
+      currentSubItems = currentSubItems.filter(it => !addedFromLogIdsToRemove.has(String(it.id)));
+    }
+
+    if (keptHistory.length === 0 && remainingTaskLogs.length === 0 && !(Number(task.accumulated_days) > 0)) {
+      const resetItems = currentSubItems
+        .filter(it => !it.added_from_log)
+        .map(it => ({
+          ...it,
+          actual_qty: 0,
+          done_qty: 0,
+          progress_percent: 0,
+          percent: 0,
+          status: 'Pending',
+          issue_note: ''
+        }));
+      return updateTask(taskId, {
+        sub_items: resetItems,
+        progress_history: [],
+        progress_percent: 0,
+        status: 'Pending',
+        issues: '',
+        resolution: ''
+      });
+    }
+
+    // กรณีลบใบงานบางใบ แต่ยังมีประวัติหรือใบงานวันอื่นเหลืออยู่
+    currentSubItems = currentSubItems.map(item => {
+      const nextItem = { ...item };
+
+      // 1) หักลบปริมาณที่เคยบวกเพิ่มในใบงานที่ถูกลบ
+      let removedAddedQty = 0;
+      let wasTouchedInRemoved = false;
+      let earliestPrevState = null;
+
+      removedEntries.forEach(entry => {
+        const snap = (entry.sub_items_snapshot || []).find(
+          s => String(s.id) === String(item.id) || (s.name && s.name === item.name)
+        );
+        if (snap) {
+          wasTouchedInRemoved = true;
+          removedAddedQty += Number(snap.added_qty) || 0;
+          if (!earliestPrevState && snap.prev_status !== undefined) {
+            earliestPrevState = {
+              actual_qty: snap.prev_actual_qty,
+              progress_percent: snap.prev_progress_percent,
+              status: snap.prev_status,
+              issue_note: snap.prev_issue_note
+            };
+          }
+        }
+      });
+
+      if (removedAddedQty > 0) {
+        nextItem.actual_qty = Math.max(0, Math.round(((Number(nextItem.actual_qty) || 0) - removedAddedQty) * 100) / 100);
+      }
+
+      // 2) ค้นหาสถานะและ % ความคืบหน้าล่าสุดจากประวัติที่ยังเหลืออยู่ (keptHistory)
+      let latestKeptSnap = null;
+      for (let i = keptHistory.length - 1; i >= 0; i--) {
+        const snap = (keptHistory[i].sub_items_snapshot || []).find(
+          s => String(s.id) === String(item.id) || (s.name && s.name === item.name)
+        );
+        if (snap) {
+          latestKeptSnap = snap;
+          break;
+        }
+      }
+
+      if (latestKeptSnap) {
+        nextItem.status = latestKeptSnap.status || 'Pending';
+        if (latestKeptSnap.progress_percent !== undefined) {
+          nextItem.progress_percent = Number(latestKeptSnap.progress_percent) || 0;
+        } else if (nextItem.status === 'Completed') {
+          nextItem.progress_percent = 100;
+        } else if (nextItem.target_qty && nextItem.target_qty > 0) {
+          nextItem.progress_percent = Math.min(100, Math.round((nextItem.actual_qty / nextItem.target_qty) * 100));
+        } else {
+          nextItem.progress_percent = 0;
+        }
+        nextItem.issue_note = latestKeptSnap.issue_note || '';
+      } else if (wasTouchedInRemoved) {
+        if (earliestPrevState) {
+          nextItem.actual_qty = Number(earliestPrevState.actual_qty) || 0;
+          nextItem.progress_percent = Number(earliestPrevState.progress_percent) || 0;
+          nextItem.status = earliestPrevState.status || 'Pending';
+          nextItem.issue_note = earliestPrevState.issue_note || '';
+        } else {
+          nextItem.actual_qty = 0;
+          nextItem.progress_percent = 0;
+          nextItem.status = 'Pending';
+          nextItem.issue_note = '';
+        }
+      }
+
+      return nextItem;
+    });
+
+    const lastKept = keptHistory.length > 0 ? keptHistory[keptHistory.length - 1] : null;
+    const fallbackPct = lastKept ? (Number(lastKept.percent) || 0) : 0;
+    const fallbackStatus = lastKept
+      ? (lastKept.status || (fallbackPct >= 100 ? 'Completed' : (fallbackPct > 0 ? 'In Progress' : 'Pending')))
+      : (remainingTaskLogs.length > 0 ? 'In Progress' : 'Pending');
+    const fallbackIssues = lastKept ? (lastKept.issues || '') : '';
+    const fallbackRes = lastKept ? (lastKept.resolution || '') : '';
+
+    const calc = calculateTaskSummaryFromSubItems(currentSubItems, fallbackStatus, fallbackPct, fallbackIssues);
+    return updateTask(taskId, {
+      sub_items: calc.sub_items,
+      progress_history: keptHistory,
+      progress_percent: currentSubItems.length > 0 ? calc.progress_percent : fallbackPct,
+      status: currentSubItems.length > 0 ? calc.status : fallbackStatus,
+      issues: calc.issues,
+      resolution: fallbackRes
+    });
   }
 
   async function getTaskCostSummary(taskId) {

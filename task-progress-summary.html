@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>สรุปความคืบหน้า | ระบบคิดค่าแรงคนงาน</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  @media print {
+    .no-print,
+    aside.sidebar,
+    header.sidebar,
+    nav.sidebar,
+    #mobile-nav,
+    #mobile-nav-toggle,
+    #sidebar-db-settings-btn,
+    #mobile-db-settings-btn,
+    #status-badge {
+      display: none !important;
+      visibility: hidden !important;
+    }
+
+    body, #app-shell, main, #page-content {
+      background: #ffffff !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      font-size: 10.5pt;
+      color: #0f172a !important;
+    }
+
+    #printable-area {
+      position: static !important;
+      left: auto !important;
+      top: auto !important;
+      width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      visibility: visible !important;
+    }
+
+    #printable-area * {
+      visibility: visible !important;
+    }
+
+    .cover-summary-page {
+      page-break-after: always !important;
+      break-after: page !important;
+      margin-bottom: 20px !important;
+    }
+
+    .site-group-card {
+      page-break-before: always !important;
+      break-before: page !important;
+      box-shadow: none !important;
+      border: 1.5px solid #334155 !important;
+      margin-bottom: 14px !important;
+      break-inside: auto;
+    }
+
+    .task-item-block {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    table {
+      page-break-inside: auto;
+    }
+
+    tr {
+      page-break-inside: avoid;
+      page-break-after: auto;
+    }
+
+    thead {
+      display: table-header-group;
+    }
+
+    @page {
+      size: A4 portrait;
+      margin: 10mm 12mm;
+    }
+  }
+</style>
+</head>
+<body>
+<div id="app-shell"></div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/seed-data.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/utils.js"></script>
+<script src="assets/js/pages/task-progress-summary.js"></script>
+</body>
+</html>

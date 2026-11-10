@@ -630,6 +630,59 @@ function setupMockDom(options = {}) {
       assert.strictEqual(fTask.value, '999', '#f-task value should be "999" even if task status is Completed');
     });
 
+    // -------------------------------------------------------------
+    // 8. Auto-detail only includes changed sub-items with "คืบหน้า XX%(เดิม YY%)" and no "ทำได้ 0 (สะสม 0)"
+    // -------------------------------------------------------------
+    await runAsyncTest('Updating sub-item progress auto-fills ONLY changed sub-item with "คืบหน้า 50%(เดิม 10%)" without "ทำได้ 0 (สะสม 0)"', async () => {
+      const taskWithSubs = {
+        id: 505,
+        task_code: 'TSK-505',
+        title: 'งานเดินท่อ PE',
+        site: 'หมู่บ้านริเวอร์ไซด์',
+        progress_percent: 55,
+        status: 'In Progress',
+        ordered_by: 'เฮีย',
+        sub_items: [
+          { id: 's1', name: 'วางท่อช่วงสโมสร', status: 'Completed', progress_percent: 100, actual_qty: 0 },
+          { id: 's2', name: 'วางท่อช่วงบ้าน A4', status: 'In Progress', progress_percent: 10, actual_qty: 0 }
+        ]
+      };
+
+      const { elementMap, calls } = setupMockDom({
+        tasks: [taskWithSubs]
+      });
+
+      const code = fs.readFileSync(jsPath, 'utf8');
+      eval(code);
+
+      await new Promise(r => setTimeout(r, 50));
+
+      const fTask = elementMap['f-task'];
+      const fDetail = elementMap['f-detail'];
+      fTask.value = '505';
+      fTask.dispatchEvent('change');
+
+      // Before changing any sub-item, completed item s1 must NOT produce "ทำได้ 0 (สะสม 0)"
+      assert(!fDetail.value.includes('ทำได้ 0'), 'Detail must NOT contain "ทำได้ 0"');
+
+      // Clear detail (simulate worker leaving detail blank) and update sub-item index 1 (s2) from 10% to 50%
+      fDetail.value = '';
+      const subList = elementMap['task-subitems-log-list'];
+      const pctInputs = subList.querySelectorAll('[data-sub-pct-idx]');
+      const s2PctInput = pctInputs.find(el => el.getAttribute('data-sub-pct-idx') === '1');
+      assert(s2PctInput, 'Should find progress_percent input for sub-item index 1');
+
+      s2PctInput.value = '50';
+      if (typeof s2PctInput.oninput === 'function') {
+        s2PctInput.oninput();
+      }
+
+      assert(fDetail.value.includes('วางท่อช่วงบ้าน A4'), 'Detail must include changed sub-item name');
+      assert(fDetail.value.includes('คืบหน้า 50%(เดิม 10%)'), 'Detail must include "คืบหน้า 50%(เดิม 10%)"');
+      assert(!fDetail.value.includes('วางท่อช่วงสโมสร'), 'Detail must NOT include unchanged sub-item');
+      assert(!fDetail.value.includes('ทำได้ 0'), 'Detail must NOT include "ทำได้ 0"');
+    });
+
     console.log(`\nResults: ${passedTests}/${totalTests} tests passed.`);
     if (passedTests !== totalTests) {
       process.exit(1);

@@ -97,11 +97,12 @@ it('should include all required menu items in renderSidebar', () => {
   const html = UTILS.renderSidebar('index.html');
   assert(typeof html === 'string', 'renderSidebar must return an HTML string');
 
-  // Verify all 8 menu items
+  // Verify all 9 menu items
   const requiredHrefs = [
     'index.html',
     'tasks.html',
     'daily-log.html',
+    'task-progress-summary.html',
     'overview.html',
     'report.html',
     'pivot-report.html',
@@ -115,6 +116,7 @@ it('should include all required menu items in renderSidebar', () => {
 
   // Verify titles / labels for task pages
   assert(html.includes('สั่งงานและติดตามงาน'), 'Sidebar must include label สั่งงานและติดตามงาน');
+  assert(html.includes('สรุปความคืบหน้า'), 'Sidebar must include label สรุปความคืบหน้า');
   assert(html.includes('สรุปต้นทุนตามงาน'), 'Sidebar must include label สรุปต้นทุนตามงาน');
   assert(html.includes('📋'), 'Sidebar must include clipboard icon for tasks.html');
   assert(html.includes('📊'), 'Sidebar must include chart icon for task-cost-report.html');

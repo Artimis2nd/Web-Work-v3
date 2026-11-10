@@ -159,8 +159,8 @@
           </div>
           <div>
             <label class="field-label">รายละเอียดงาน</label>
-            <textarea id="f-detail" class="field-input" rows="6" required
-                      placeholder="เช่น เทปูนพื้นชั้น 2, ผูกเหล็กเสา&#10;ระบุรายละเอียดเพิ่มเติม..."></textarea>
+            <textarea id="f-detail" class="field-input" rows="6"
+                      placeholder="เช่น เทปูนพื้นชั้น 2, ผูกเหล็กเสา (หากเลือกใบสั่งงานและปรับความคืบหน้า ระบบจะดึงรายการที่เปลี่ยนแปลงมาใส่ให้อัตโนมัติ)"></textarea>
           </div>
           <div>
             <label class="field-label">ผู้สั่งงาน</label>
@@ -753,6 +753,9 @@
       id: it.id,
       name: it.name || '',
       base_actual_qty: Number(it.actual_qty) || 0,
+      base_progress_percent: Number(it.progress_percent) || 0,
+      base_status: it.status || 'Pending',
+      base_issue_note: it.issue_note || '',
       added_qty: 0,
       target_qty: it.target_qty != null && Number(it.target_qty) > 0 ? Number(it.target_qty) : null,
       unit: it.unit || '',
@@ -775,30 +778,52 @@
     const activeLines = [];
     logSubItemsState.forEach((it) => {
       const added = Number(it.added_qty) || 0;
+      const currPct = Number(it.progress_percent) || 0;
+      const basePct = Number(it.base_progress_percent) || 0;
+      const baseStatus = it.base_status || 'Pending';
+      const baseIssue = it.base_issue_note || '';
+      const hasChanged =
+        added > 0 ||
+        currPct !== basePct ||
+        it.status !== baseStatus ||
+        (it.status === 'Blocked' && String(it.issue_note || '') !== String(baseIssue));
+
+      if (!hasChanged) return;
+
       const totalActual = Math.round(((Number(it.base_actual_qty) || 0) + added) * 100) / 100;
       const unitStr = it.unit ? ` ${it.unit}` : '';
+      const cleanName = String(it.name || '').replace(/\s+/g, ' ').trim();
+      const pctSuffix = `คืบหน้า ${currPct}%(เดิม ${basePct}%)`;
+
       if (it.status === 'Cancelled') {
-        activeLines.push(`- ${it.name}: ยกเลิกรายการ`);
+        activeLines.push(`- ${cleanName}: ยกเลิกรายการ (${pctSuffix})`);
       } else if (it.status === 'Blocked') {
-        activeLines.push(`- ${it.name}: ติดปัญหา (${it.issue_note || 'รอดำเนินการแก้ไข'})`);
-      } else if (added > 0 || it.status === 'Completed') {
+        const issueTxt = it.issue_note ? ` (${it.issue_note})` : '';
+        activeLines.push(`- ${cleanName}: ติดปัญหา${issueTxt} ${pctSuffix}`);
+      } else if (added > 0) {
         const targetStr = it.target_qty ? `/${it.target_qty}` : '';
-        const statusTag = it.status === 'Completed' ? ' [เสร็จแล้ว]' : '';
-        activeLines.push(`- ${it.name}: วันนี้ทำได้ ${added}${unitStr} (สะสม ${totalActual}${targetStr}${unitStr})${statusTag}`);
+        activeLines.push(`- ${cleanName}: ทำได้ ${added}${unitStr} (สะสม ${totalActual}${targetStr}${unitStr}) ${pctSuffix}`);
+      } else {
+        activeLines.push(`- ${cleanName} ${pctSuffix}`);
       }
     });
 
     newLogSubItemsState.forEach((it) => {
-      const name = String(it.name || '').trim();
+      const name = String(it.name || '').replace(/\s+/g, ' ').trim();
       if (!name) return;
       const added = Number(it.added_qty) || 0;
+      const currPct = it.status === 'Completed' ? 100 : (Number(it.progress_percent) || 50);
       const unitStr = it.unit ? ` ${it.unit}` : '';
-      const statusTag = it.status === 'Completed' ? ' [เสร็จแล้ว]' : (it.status === 'Blocked' ? ` [ติดปัญหา: ${it.issue_note || ''}]` : '');
-      activeLines.push(`- (งานเพิ่มหน้างาน) ${name}: ${added > 0 ? `ทำได้ ${added}${unitStr}` : ''}${statusTag}`);
+      const pctSuffix = `คืบหน้า ${currPct}%(เดิม 0%)`;
+      if (added > 0) {
+        activeLines.push(`- (งานเพิ่มหน้างาน) ${name}: ทำได้ ${added}${unitStr} ${pctSuffix}`);
+      } else {
+        activeLines.push(`- (งานเพิ่มหน้างาน) ${name} ${pctSuffix}`);
+      }
     });
 
     if (activeLines.length > 0) {
-      return `${header}\nผลงานวันนี้:\n${activeLines.join('\n')}`;
+      return activeLines.join('\n');
     }
     return header;
   }
@@ -1039,8 +1064,13 @@
         const item = logSubItemsState[idx];
         if (!item) return;
         item.progress_percent = Math.max(0, Math.min(100, Number(inp.value) || 0));
-        if (item.progress_percent >= 100 && item.status !== 'Blocked') item.status = 'Completed';
-        else if (item.progress_percent > 0 && item.status === 'Pending') item.status = 'In Progress';
+        if (item.progress_percent >= 100 && item.status !== 'Blocked') {
+          item.status = 'Completed';
+        } else if (item.progress_percent < 100 && item.status === 'Completed') {
+          item.status = item.progress_percent > 0 ? 'In Progress' : 'Pending';
+        } else if (item.progress_percent > 0 && item.status === 'Pending') {
+          item.status = 'In Progress';
+        }
         recalculateAndAutoFillFromSubItems(task);
       };
     });
@@ -1409,11 +1439,26 @@
     const taskSelect = document.getElementById('f-task');
     const selectedTaskId = (taskSelect && taskSelect.value) ? Number(taskSelect.value) : null;
 
+    const detailEl = document.getElementById('f-detail');
+    let finalJobDetail = detailEl ? detailEl.value.trim() : '';
+    if (!finalJobDetail && selectedTaskId) {
+      const selectedTaskObj = getSelectedTaskObj();
+      if (selectedTaskObj) {
+        finalJobDetail = buildAutoDetailText(selectedTaskObj);
+        if (detailEl) detailEl.value = finalJobDetail;
+      }
+    }
+
+    if (!finalJobDetail) {
+      errorBox.appendChild(Utils.errorBanner('กรุณาระบุรายละเอียดงาน หรือเลือกใบสั่งงาน'));
+      return;
+    }
+
     const payload = {
       taskId: selectedTaskId,
       date: apiDate,
       site: document.getElementById('f-site').value.trim(),
-      jobDetail: document.getElementById('f-detail').value.trim(),
+      jobDetail: finalJobDetail,
       requestedBy: document.getElementById('f-requester').value.trim(),
       // ส่งเฉพาะ Base64 ไปให้ Backend อัปโหลด, ส่วน URL ส่งตรงๆ
       images: compressedImages.map(img => img.data),
@@ -1461,6 +1506,7 @@
             }));
 
           await Api.addTaskProgress(selectedTaskId, {
+            groupId: (res && res.groupId) ? res.groupId : (editGroupId || undefined),
             percent: progressVal,
             issues: issuesVal,
             resolution: resolutionVal,

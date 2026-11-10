@@ -6,6 +6,103 @@
 <title>สรุปภาพรวมงาน | ระบบคิดค่าแรงคนงาน</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="assets/css/style.css">
+<style>
+  /* ซ่อนส่วนที่แสดงเฉพาะตอนพิมพ์เมื่อเปิดดูบนหน้าจอปกติ */
+  .print-only {
+    display: none !important;
+  }
+
+  @media print {
+    .print-only {
+      display: block !important;
+    }
+
+    .print-only .grid-cols-2 {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 0.75rem !important;
+    }
+
+    .sidebar,
+    aside,
+    header,
+    #sidebar,
+    #sidebar-backdrop,
+    #mobile-nav,
+    #mobile-nav-toggle,
+    #sidebar-db-settings-btn,
+    #mobile-db-settings-btn,
+    #status-badge,
+    .no-print {
+      display: none !important;
+      visibility: hidden !important;
+    }
+
+    body,
+    #app-shell,
+    #app-shell > div,
+    .flex-1,
+    main,
+    #page-content {
+      background: #ffffff !important;
+      display: block !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      font-size: 10pt;
+      color: #0f172a !important;
+    }
+
+    #printable-area {
+      display: block !important;
+      position: static !important;
+      left: auto !important;
+      top: auto !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      visibility: visible !important;
+    }
+
+    #printable-area * {
+      visibility: visible !important;
+    }
+
+    .overview-calendar-card {
+      page-break-after: always !important;
+      break-after: page !important;
+      margin-bottom: 0 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+
+    .overview-calendar-card .grid-cols-1 {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 1rem !important;
+    }
+
+    .site-work-card {
+      page-break-before: always !important;
+      break-before: page !important;
+      box-shadow: none !important;
+      border: 1.5px solid #334155 !important;
+      margin-bottom: 14px !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      break-inside: auto;
+    }
+
+    @page {
+      size: A4 portrait;
+      margin: 10mm 12mm;
+    }
+  }
+</style>
 </head>
 <body>
 <div id="app-shell"></div>

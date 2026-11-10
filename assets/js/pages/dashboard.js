@@ -36,12 +36,17 @@
   }
 
   function renderGroupRow(group) {
+    const isUnlinked = group.taskId === null || group.taskId === undefined || group.taskId === '';
+    const alertIconHtml = isUnlinked
+      ? `<span class="inline-block text-amber-600 mr-1 font-bold text-sm" title="รายงานประจำวันใบนี้ยังไม่มีรหัสใบสั่งงาน (กดปุ่มดินสอเพื่อเชื่อมโยง)">⚠️</span>`
+      : '';
+
     return `
-      <tr>
+      <tr class="${isUnlinked ? 'bg-amber-50/40' : ''}">
         <td class="text-center"><input type="checkbox" class="group-checkbox" value="${Utils.escapeHtml(group.groupId)}"></td>
         <td class="text-center">${Utils.formatDate(group.date)}</td>
         <td class="text-center text-truncate" title="${Utils.escapeHtml(group.site || '-')}">${Utils.escapeHtml(group.site || '-')}</td>
-        <td class="truncate max-w-xs" title="${Utils.escapeHtml(group.jobDetail || '-')}">${Utils.escapeHtml(group.jobDetail || '-')}</td>
+        <td class="truncate max-w-xs" title="${Utils.escapeHtml(group.jobDetail || '-')}">${alertIconHtml}<span>${Utils.escapeHtml(group.jobDetail || '-')}</span></td>
         <td class="font-mono text-center">${group.workerCount || 0} คน</td>
         <td class="font-mono font-semibold text-center" style="color:var(--blueprint-dark)">฿${Utils.money(group.totalNormal + group.totalFixed)}</td>
         <td class="text-center">${Utils.escapeHtml(group.requestedBy || '-')}</td>
@@ -128,12 +133,12 @@
         t.title || '',
         t.site || '',
         t.status || '',
-        Number(t.progress) || 0,
-        t.assigned_date || '',
+        Number(t.progress_percent ?? t.progress) || 0,
+        t.order_date || t.assigned_date || '',
         t.due_date || '',
-        t.requested_by || '',
-        t.assigned_workers || '',
-        Number(t.accumulated_days) || 0,
+        t.ordered_by || t.requested_by || '',
+        t.assigned_to || t.assigned_workers || '',
+        Number(t.total_days_worked ?? t.accumulated_days) || 0,
         Number(t.accumulated_man_days) || 0,
         Number(t.accumulated_cost) || 0,
         Number(t.accumulated_markup_cost) || 0
@@ -968,6 +973,10 @@
       updateFilterBadge();
     }
 
+    const unlinkedCount = sortedRecentGroups.filter(
+      g => g.taskId === null || g.taskId === undefined || g.taskId === ''
+    ).length;
+
     content.innerHTML = `
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         ${kpiCard('จำนวนคนงานทั้งหมด', data.totalWorkers, 'var(--blueprint)')}
@@ -978,7 +987,14 @@
 
       <div class="ledger-card p-4">
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 class="font-display text-lg font-semibold">รายการใบงานล่าสุด</h2>
+          <div class="flex items-center gap-2 flex-wrap">
+            <h2 class="font-display text-lg font-semibold">รายการใบงานล่าสุด</h2>
+            ${sortedRecentGroups.length > 0 ? (
+              unlinkedCount > 0
+                ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300" id="unlinked-logs-summary-badge">⚠️ ยังไม่ผูกใบสั่งงาน ${unlinkedCount} ใบ</span>`
+                : `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" id="unlinked-logs-summary-badge">✓ เชื่อมโยงใบสั่งงานครบทุกใบ</span>`
+            ) : ''}
+          </div>
           <div class="flex gap-2 flex-wrap">
             ${allSites.length ? `
             <div class="site-filter-wrap" id="site-filter-wrap">
