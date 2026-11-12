@@ -8,7 +8,8 @@ const Api = (() => {
     LOGS: 'WAGE_LOCAL_LOGS',
     IMAGES: 'WAGE_LOCAL_IMAGES',
     BACKUPS: 'WAGE_LOCAL_BACKUPS',
-    TASKS: 'WAGE_LOCAL_TASKS'
+    TASKS: 'WAGE_LOCAL_TASKS',
+    CALENDAR_OVERRIDES: 'WAGE_CALENDAR_OVERRIDES'
   };
 
   function getConfig() {
@@ -142,8 +143,189 @@ const Api = (() => {
     }
   }
 
+  let syncDbTimer = null;
+  function triggerLocalDbSync() {
+    if (typeof fetch === 'undefined') return;
+    clearTimeout(syncDbTimer);
+    syncDbTimer = setTimeout(() => {
+      try {
+        const payload = {
+          workers: readLocal(LOCAL_KEYS.WORKERS, []),
+          logs: readLocal(LOCAL_KEYS.LOGS, []),
+          tasks: readLocal(LOCAL_KEYS.TASKS, []),
+          images: readLocal(LOCAL_KEYS.IMAGES, {}),
+          syncedAt: new Date().toISOString()
+        };
+        fetch('/api/local-db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).catch(() => {});
+      } catch (_) {}
+    }, 500);
+  }
+
+  // ผสานและซิงค์ข้อมูลสองทาง (Smart Merge) ระหว่างเบราว์เซอร์กับไดรฟ์ E:\#SRRC\Web-Work-v3\_local_data\db.json
+  async function loadLocalDiskDbIfAvailable() {
+    if (typeof fetch === 'undefined') return;
+    try {
+      const res = await fetch('/api/local-db');
+      if (!res.ok) return;
+
+      const diskDb = await res.json();
+      if (!diskDb || typeof diskDb !== 'object') return;
+
+      let needPushToDisk = false;
+
+      // 1. ผสาน Tasks (คำสั่งงาน)
+      const localTasks = readLocal(LOCAL_KEYS.TASKS, []) || [];
+      const diskTasks = Array.isArray(diskDb.tasks) ? diskDb.tasks : [];
+      const tasksMap = new Map();
+
+      // นำงานจากดิสก์ใส่ Map
+      diskTasks.forEach(t => {
+        const key = t.task_code || String(t.id);
+        if (key) tasksMap.set(key, t);
+      });
+
+      // นำงานจากเบราว์เซอร์นี้มาตรวจสอบ
+      localTasks.forEach(t => {
+        const key = t.task_code || String(t.id);
+        if (!key) return;
+        if (!tasksMap.has(key)) {
+          // พบงานใหม่ในเบราว์เซอร์ที่ดิสก์ยังไม่มี (เช่น TSK-202611-006 ใน VS Code) -> เพิ่มเข้าไปทันที!
+          tasksMap.set(key, t);
+          needPushToDisk = true;
+        } else {
+          const diskItem = tasksMap.get(key);
+          const localUpdated = t.updated_at || t.created_at || '';
+          const diskUpdated = diskItem.updated_at || diskItem.created_at || '';
+          if (localUpdated && localUpdated > diskUpdated) {
+            tasksMap.set(key, t);
+            needPushToDisk = true;
+          }
+        }
+      });
+      const mergedTasks = Array.from(tasksMap.values());
+      mergedTasks.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+      localStorage.setItem(LOCAL_KEYS.TASKS, JSON.stringify(mergedTasks));
+
+      // 2. ผสาน Daily Logs (บันทึกงานประจำวัน)
+      const localLogs = readLocal(LOCAL_KEYS.LOGS, []) || [];
+      const diskLogs = Array.isArray(diskDb.logs) ? diskDb.logs.map(mapLogRowFromDb) : [];
+      const logsMap = new Map();
+
+      diskLogs.forEach(r => {
+        const key = `${r.GroupID || r.group_id}_${r.WorkerName || r.worker_name}`;
+        logsMap.set(key, r);
+      });
+
+      localLogs.forEach(r => {
+        const key = `${r.GroupID || r.group_id}_${r.WorkerName || r.worker_name}`;
+        if (!logsMap.has(key)) {
+          logsMap.set(key, r);
+          needPushToDisk = true;
+        }
+      });
+      const mergedLogs = Array.from(logsMap.values());
+      localStorage.setItem(LOCAL_KEYS.LOGS, JSON.stringify(mergedLogs));
+
+      // 3. ผสาน Workers (คนงาน)
+      const localWorkers = readLocal(LOCAL_KEYS.WORKERS, []) || [];
+      const diskWorkers = Array.isArray(diskDb.workers) ? diskDb.workers : [];
+      const workersMap = new Map();
+      diskWorkers.forEach(w => workersMap.set(w.FullName || String(w.ID), w));
+      localWorkers.forEach(w => {
+        const key = w.FullName || String(w.ID);
+        if (!workersMap.has(key)) {
+          workersMap.set(key, w);
+          needPushToDisk = true;
+        }
+      });
+      const mergedWorkers = Array.from(workersMap.values());
+      localStorage.setItem(LOCAL_KEYS.WORKERS, JSON.stringify(mergedWorkers));
+
+      // 4. ผสาน Images
+      const localImages = readLocal(LOCAL_KEYS.IMAGES, {}) || {};
+      const diskImages = (diskDb.images && typeof diskDb.images === 'object') ? diskDb.images : {};
+      const mergedImages = { ...diskImages, ...localImages };
+      localStorage.setItem(LOCAL_KEYS.IMAGES, JSON.stringify(mergedImages));
+
+      // 5. ผสาน Calendar Overrides (วันทำงานโรงงาน / วันหยุดบริษัท)
+      const localOverrides = readLocal(LOCAL_KEYS.CALENDAR_OVERRIDES, {}) || {};
+      const diskOverrides = (diskDb.calendar_day_status && typeof diskDb.calendar_day_status === 'object') ? diskDb.calendar_day_status : {};
+      const mergedOverrides = { ...diskOverrides, ...localOverrides };
+      localStorage.setItem(LOCAL_KEYS.CALENDAR_OVERRIDES, JSON.stringify(mergedOverrides));
+
+      // หากเบราว์เซอร์นี้มีงานใหม่ที่ดิสก์ยังไม่มี ให้ส่งบันทึกขึ้น _local_data/db.json ทันที!
+      if (needPushToDisk) {
+        fetch('/api/local-db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workers: mergedWorkers,
+            logs: mergedLogs,
+            tasks: mergedTasks,
+            images: mergedImages
+          })
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  // กู้คืนรูปภาพจาก IndexedDB ของเครื่องลงโฟลเดอร์ E:\#SRRC\Web-Work-v3\_local_data\images\ อัตโนมัติ
+  async function migrateIndexedDbToLocalDisk() {
+    if (typeof fetch === 'undefined') return 0;
+    try {
+      const db = await openMediaDb();
+      if (!db) return 0;
+
+      let existingIds = new Set();
+      try {
+        const listRes = await fetch('/api/local-media-list');
+        if (listRes.ok) {
+          const listJson = await listRes.json();
+          if (Array.isArray(listJson.mediaIds)) {
+            existingIds = new Set(listJson.mediaIds);
+          }
+        }
+      } catch (_) {}
+
+      const allRecords = await new Promise((res) => {
+        try {
+          const tx = db.transaction(IDB_STORE, 'readonly');
+          const store = tx.objectStore(IDB_STORE);
+          const req = store.getAll();
+          req.onsuccess = () => res(req.result || []);
+          req.onerror = () => res([]);
+        } catch (_) {
+          res([]);
+        }
+      });
+
+      let count = 0;
+      for (const rec of allRecords) {
+        if (!rec || !rec.id || !rec.data) continue;
+        if (existingIds.has(rec.id)) continue;
+
+        await fetch('/api/local-media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(rec)
+        }).catch(() => {});
+        count++;
+      }
+      return count;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   function writeLocal(key, val) {
     localStorage.setItem(key, JSON.stringify(val));
+    if (key === LOCAL_KEYS.WORKERS || key === LOCAL_KEYS.LOGS || key === LOCAL_KEYS.TASKS || key === LOCAL_KEYS.IMAGES) {
+      triggerLocalDbSync();
+    }
   }
 
   function ensureLocalSeed() {
@@ -359,8 +541,40 @@ const Api = (() => {
       });
       return;
     }
+
+    // โหมดไดรฟ์พกพา/ออฟไลน์: บันทึกรูปภาพ Base64 เป็นไฟล์ภาพจริงใน _local_data/images/ บนไดรฟ์ E:
+    const diskUrls = [];
+    for (let i = 0; i < (urls || []).length; i++) {
+      const u = urls[i];
+      if (typeof u === 'string' && u.startsWith('data:image/')) {
+        const mediaId = `log_${groupId}_${i + 1}`;
+        try {
+          if (typeof fetch !== 'undefined') {
+            const upRes = await fetch('/api/local-media', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: mediaId,
+                group_id: groupId,
+                name: `${mediaId}.jpg`,
+                type: 'image/jpeg',
+                media_kind: 'image',
+                data: u
+              })
+            });
+            if (upRes.ok) {
+              const upJson = await upRes.json();
+              diskUrls.push(upJson.url || `/api/local-media/${encodeURIComponent(mediaId)}?raw=1`);
+              continue;
+            }
+          }
+        } catch (_) {}
+      }
+      diskUrls.push(u);
+    }
+
     const imgMap = readLocal(LOCAL_KEYS.IMAGES, {});
-    imgMap[groupId] = urls;
+    imgMap[groupId] = diskUrls;
     writeLocal(LOCAL_KEYS.IMAGES, imgMap);
   }
 
@@ -542,6 +756,7 @@ const Api = (() => {
   }
 
   async function getLogs(payload = {}) {
+    await loadLocalDiskDbIfAvailable().catch(() => {});
     const logs = await fetchAllLogRows({
       startDate: payload.startDate,
       endDate: payload.endDate
@@ -946,6 +1161,17 @@ const Api = (() => {
       memoryMediaStore[mediaId] = record;
     }
 
+    // ซิงค์ไฟล์แนบลงโฟลเดอร์เครื่อง E:\#SRRC\Web-Work-v3\_local_data\images\ แบบอัตโนมัติ (ไม่ส่งขึ้น GitHub)
+    try {
+      if (typeof fetch !== 'undefined') {
+        fetch('/api/local-media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(record)
+        }).catch(() => {});
+      }
+    } catch (_) {}
+
     return {
       id: record.id,
       task_id: record.task_id,
@@ -959,17 +1185,47 @@ const Api = (() => {
 
   async function getTaskMedia(mediaId) {
     if (!mediaId) return null;
+    let localRecord = null;
     const db = await openMediaDb();
     if (db) {
-      return new Promise((resolve) => {
+      localRecord = await new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, 'readonly');
         const store = tx.objectStore(IDB_STORE);
         const req = store.get(mediaId);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => resolve(null);
       });
+    } else {
+      localRecord = memoryMediaStore[mediaId] || null;
     }
-    return memoryMediaStore[mediaId] || null;
+
+    if (localRecord && localRecord.data) {
+      return localRecord;
+    }
+
+    // หากในเบราว์เซอร์ไม่มีข้อมูล ให้ลองดึงจากโฟลเดอร์ในเครื่อง E:\#SRRC\Web-Work-v3\_local_data\images\
+    try {
+      if (typeof fetch !== 'undefined') {
+        const res = await fetch(`/api/local-media/${encodeURIComponent(mediaId)}`);
+        if (res.ok) {
+          const diskRecord = await res.json();
+          if (diskRecord && diskRecord.data) {
+            // บันทึกกลับลง IndexedDB ในเครื่องเพื่อความรวดเร็วในครั้งถัดไป
+            if (db) {
+              try {
+                const tx = db.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).put(diskRecord);
+              } catch (_) {}
+            } else {
+              memoryMediaStore[mediaId] = diskRecord;
+            }
+            return diskRecord;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return localRecord;
   }
 
   async function listTaskMedia(taskId) {
@@ -1290,6 +1546,7 @@ const Api = (() => {
   }
 
   async function getTasks(filter = {}) {
+    await loadLocalDiskDbIfAvailable().catch(() => {});
     let taskList = [];
     const allLogs = await fetchAllLogRows().catch(() => []);
 
@@ -2748,6 +3005,34 @@ const Api = (() => {
     return json;
   }
 
+
+  async function getCalendarDayOverrides() {
+    await loadLocalDiskDbIfAvailable();
+    return readLocal(LOCAL_KEYS.CALENDAR_OVERRIDES, {}) || {};
+  }
+
+  async function saveCalendarDayOverride(dateIso, type, note = '') {
+    const overrides = readLocal(LOCAL_KEYS.CALENDAR_OVERRIDES, {}) || {};
+    if (!type || type === 'clear') {
+      delete overrides[dateIso];
+    } else {
+      overrides[dateIso] = { type, note, updated_at: new Date().toISOString() };
+    }
+    localStorage.setItem(LOCAL_KEYS.CALENDAR_OVERRIDES, JSON.stringify(overrides));
+
+    // บันทึกลง _local_data/db.json
+    if (typeof fetch !== 'undefined') {
+      try {
+        await fetch('/api/local-db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendar_day_status: overrides })
+        });
+      } catch (_) {}
+    }
+    return overrides;
+  }
+
   async function saveOfflineCurrentState() {
     const pkg = await buildBackupPackageData({});
     const res = await fetch('/api/offline/save', {
@@ -2817,9 +3102,24 @@ const Api = (() => {
     checkOfflineMode,
     loadOfflineFolderData,
     saveOfflineCurrentState,
-    exportOfflineCurrentZip
+    exportOfflineCurrentZip,
+    // Calendar Overrides API
+    getCalendarDayOverrides,
+    saveCalendarDayOverride,
+    // Portable Local Disk API
+    loadLocalDiskDbIfAvailable,
+    migrateIndexedDbToLocalDisk
   };
 })();
+
+// Auto-init for portable drive (ดึง db.json จากไดรฟ์ E: และกู้คืนรูปจาก IndexedDB ลงโฟลเดอร์เครื่อง)
+if (typeof window !== 'undefined') {
+  try {
+    Api.loadLocalDiskDbIfAvailable().then(() => {
+      Api.migrateIndexedDbToLocalDisk().catch(() => {});
+    }).catch(() => {});
+  } catch (_) {}
+}
 
 // ให้บริการผ่าน window.Api และ window.WAGE_API สำหรับเบราว์เซอร์ และ CommonJS สำหรับ Node.js
 if (typeof window !== 'undefined') {

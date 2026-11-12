@@ -1,6 +1,7 @@
 (() => {
+  'use strict';
+
   const container = document.getElementById('cards-container');
-  const imagesContainer = document.getElementById('images-container');
 
   function formatDateForPrint(d) {
     if (!d) return '-';
@@ -14,11 +15,11 @@
   }
 
   function formatWage(n) {
-    return Number(n || 0).toLocaleString();
+    return Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
   function formatWorkerLine(w) {
-    const name = w.workerName || '(ไม่ระบุ)';
+    const name = w.workerName || w.FullName || '(ไม่ระบุ)';
     const wageType = w.wageType || 'hourly';
     const hours = Number(w.hours) || 0;
     const otHours = Number(w.otHours) || 0;
@@ -70,101 +71,95 @@
     const workers = group.workers || [];
     const { totalRaw, totalNormalOt, totalFixed, grandTotal } = calcSubTotals(workers);
 
-    let workersHtml = '';
-    (workers || []).forEach(w => {
-      const info = formatWorkerLine(w);
-      workersHtml += `
-        <div class="worker-item">
-          - ${info.name} จำนวน ${info.detail} ค่าแรงวันนี้ ${formatWage(info.wageDisplay)} บาท
-        </div>
-      `;
-    });
+    // จัดรายชื่อคนงานเป็น 2 คอลัมน์ ประหยัดกระดาษ 50%
+    let workersGridHtml = '';
+    if (workers.length > 0) {
+      workersGridHtml = workers.map(w => {
+        const info = formatWorkerLine(w);
+        return `
+          <div class="worker-item">
+            <span class="worker-name-hours">• <strong>${Utils.escapeHtml(info.name)}</strong> (${info.detail})</span>
+            <span class="worker-wage">${formatWage(info.wageDisplay)} บ.</span>
+          </div>
+        `;
+      }).join('');
+    } else {
+      workersGridHtml = '<div class="worker-item" style="color:#94a3b8;">ไม่มีข้อมูลคนงานในบันทึกนี้</div>';
+    }
 
     return `
       <div class="print-card">
         <div class="card-header">
-          <div class="row">
-            <span class="label">วันที่ :</span>${dateStr}
-            <span class="sep"></span>
-            <span class="label">โครงการ :</span>${Utils.escapeHtml(site)}
-            <span class="sep"></span>
-            <span class="label">ผู้สั่งงาน :</span>${Utils.escapeHtml(requestedBy)}
+          <div class="row-top">
+            <div><span class="label">วันที่ :</span> <strong>${dateStr}</strong></div>
+            <div><span class="label">โครงการ :</span> <strong>${Utils.escapeHtml(site)}</strong></div>
+            <div><span class="label">ผู้สั่งงาน :</span> <strong>${Utils.escapeHtml(requestedBy)}</strong></div>
+            <div><span class="label">จำนวน :</span> <strong>${workers.length} คน</strong></div>
           </div>
-          <div class="row">
-            <span class="label">รายละเอียดงาน :</span>${Utils.escapeHtml(group.jobDetail || '(ไม่ระบุ)')}
+          <div class="row-detail">
+            <span class="label">รายละเอียดงาน :</span> ${Utils.escapeHtml(group.jobDetail || '(ไม่ระบุ)')}
           </div>
         </div>
-        <div class="card-workers">
-          ${workersHtml || '<div class="worker-item" style="color:#999;">ไม่มีข้อมูลคนงาน</div>'}
+
+        <div class="card-workers-grid">
+          ${workersGridHtml}
         </div>
+
         <div class="card-footer">
-          <div class="sub-row">รวมค่าแรงดิบ : ${formatWage(totalRaw)} บาท</div>
-          <div class="sub-row">รวมค่าแรงปกติ+OT (รวม +20%) : ${formatWage(totalNormalOt)} บาท</div>
-          <div class="sub-row">รวมค่าแรงเหมา (ไม่มี +20%) : ${formatWage(totalFixed)} บาท</div>
-          <div class="total-row">รวมค่าแรงวันนี้ : ${formatWage(grandTotal)} บาท</div>
+          <div class="totals-box">
+            <div class="sub-row">รวมค่าแรงดิบ : ${formatWage(totalRaw)} บาท</div>
+            <div class="sub-row">รวมค่าแรงปกติ+OT (รวม +20%) : ${formatWage(totalNormalOt)} บาท</div>
+            <div class="sub-row">รวมค่าแรงเหมา (ไม่มี +20%) : ${formatWage(totalFixed)} บาท</div>
+            <div class="total-row">รวมค่าแรงวันนี้ : ${formatWage(grandTotal)} บาท</div>
+          </div>
         </div>
       </div>
     `;
   }
 
-  function renderCardsInPairs(groupsData) {
-    let html = '';
-    for (let i = 0; i < groupsData.length; i += 2) {
-      const card1 = renderCard(groupsData[i]);
-      const card2 = i + 1 < groupsData.length ? renderCard(groupsData[i + 1]) : '';
-      html += `<div class="card-pair">${card1}${card2}</div>`;
-    }
-    return html;
-  }
+  // จัดกลุ่มใบงานแยกตามหน้างาน (Site) เพื่อให้พิมพ์หน้างานเดียวกันต่อกัน และขึ้นหน้าใหม่เมื่อขึ้นหน้างานใหม่
+  function renderGroupedBySite(groupsData) {
+    const bySite = new Map();
 
-  function renderImages(allGroups) {
-    const imageEntries = [];
-    allGroups.forEach(group => {
-      const urls = group.imageUrls || [];
-      urls.forEach(url => {
-        imageEntries.push({
-          url: url,
-          site: group.site || '',
-          date: group.date, // Keep original date for sorting
-          dateStr: formatDateForPrint(group.date)
-        });
+    groupsData.forEach(g => {
+      const siteName = (g.site || '(ไม่ระบุโครงการ)').trim();
+      if (!bySite.has(siteName)) {
+        bySite.set(siteName, []);
+      }
+      bySite.get(siteName).push(g);
+    });
+
+    let fullHtml = '';
+
+    bySite.forEach((siteGroups, siteName) => {
+      // เรียงวันที่จากน้อยไปหามากในแต่ละหน้างาน
+      siteGroups.sort((a, b) => {
+        const da = a.date ? new Date(a.date).getTime() : 0;
+        const db = b.date ? new Date(b.date).getTime() : 0;
+        return da - db;
       });
-    });
 
-    if (imageEntries.length === 0) {
-      imagesContainer.innerHTML = '';
-      return;
-    }
+      // รวมยอดค่าแรงทั้งหมดของหน้างานนี้
+      let siteGrandTotal = 0;
+      siteGroups.forEach(g => {
+        const { grandTotal } = calcSubTotals(g.workers);
+        siteGrandTotal += grandTotal;
+      });
 
-    imageEntries.sort((a, b) => {
-      const da = a.date ? new Date(a.date).getTime() : 0;
-      const db = b.date ? new Date(b.date).getTime() : 0;
-      return da - db;
-    });
-
-    // Force 12 images per page (2 columns × 6 rows)
-    const IMAGES_PER_PAGE = 12;
-    let html = '';
-
-    for (let pageIdx = 0; pageIdx < imageEntries.length; pageIdx += IMAGES_PER_PAGE) {
-      const pageItems = imageEntries.slice(pageIdx, pageIdx + IMAGES_PER_PAGE);
-      html += `<div class="image-page">`;
-      html += `<div class="image-grid">`;
-      pageItems.forEach(item => {
-        html += `
-          <div class="img-cell">
-            <div class="img-wrapper">
-              <img src="${Utils.escapeHtml(item.url)}" alt="รูปภาพจาก ${Utils.escapeHtml(item.site)} วันที่ ${item.dateStr}" loading="lazy">
-            </div>
-            <div class="img-date">📅 ${Utils.escapeHtml(item.site)} - ${item.dateStr}</div>
+      fullHtml += `
+        <div class="site-print-section">
+          <div class="site-header-banner">
+            <div>📍 หน้างาน / โครงการ : ${Utils.escapeHtml(siteName)} (รวม ${siteGroups.length} ใบงาน)</div>
+            <div style="font-family:monospace;font-size:12pt;color:#fef08a;">ยอดรวมหน้างานนี้: ${formatWage(siteGrandTotal)} บาท</div>
           </div>
-        `;
-      });
-      html += `</div>`;
-      html += `</div>`;
-    }
+          <div class="site-cards-flow">
+            ${siteGroups.map(renderCard).join('')}
+          </div>
+        </div>
+      `;
+    });
 
-    imagesContainer.innerHTML = html;
+    return fullHtml;
   }
 
   async function initialize() {
@@ -176,7 +171,7 @@
     } catch (e) {}
 
     if (!groupIds || groupIds.length === 0) {
-      container.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">ไม่พบข้อมูลที่เลือก กรุณากลับไปเลือกข้อมูลที่หน้าแดชบอร์ด</div>';
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">ไม่พบข้อมูลที่เลือก กรุณากลับไปเลือกข้อมูลที่หน้าหลัก</div>';
       if (printBtn) printBtn.disabled = true;
       return;
     }
@@ -185,21 +180,14 @@
       const groupPromises = groupIds.map(gid => Api.getLogGroup({ groupId: gid }));
       const groupsData = await Promise.all(groupPromises);
 
-      groupsData.sort((a, b) => {
-        const da = a.date ? new Date(a.date).getTime() : 0;
-        const db = b.date ? new Date(b.date).getTime() : 0;
-        return da - db;
-      });
-
-      container.innerHTML = renderCardsInPairs(groupsData);
-      renderImages(groupsData);
+      container.innerHTML = renderGroupedBySite(groupsData);
 
       if (printBtn) {
         printBtn.disabled = false;
       }
-
     } catch (err) {
-      container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">เกิดข้อผิดพลาด: ${Utils.escapeHtml(err.message)}</div>`;
+      container.innerHTML = `<div style="text-align:center;padding:40px;color:#b91c1c;">เกิดข้อผิดพลาดในการโหลดข้อมูล: ${err.message}</div>`;
+      if (printBtn) printBtn.disabled = true;
     }
   }
 

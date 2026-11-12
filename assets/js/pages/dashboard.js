@@ -65,6 +65,24 @@
   // ============================================================
   // Backup Package (.zip) Builder & Importer + Modals
   // ============================================================
+
+  function toDisplayDate(isoStr) {
+    if (!isoStr) return '';
+    const clean = String(isoStr).slice(0, 10);
+    const parts = clean.split('-');
+    if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0];
+    return clean;
+  }
+
+  function toIsoDate(displayStr) {
+    if (!displayStr) return '';
+    const clean = String(displayStr).trim();
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      if (parts.length === 3) return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0');
+    }
+    return clean;
+  }
   function closeModal() {
     const backdrop = document.getElementById('backup-modal-backdrop');
     if (backdrop) backdrop.remove();
@@ -319,11 +337,11 @@
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="field-label text-xs" for="export-start-date">ตั้งแต่วันที่</label>
-              <input type="date" id="export-start-date" class="field-input w-full" value="${Utils.escapeHtml(defaultStart)}">
+              <input type="text" id="export-start-date" class="field-input w-full" placeholder="วว/ดด/ปปปป" autocomplete="off" value="${Utils.escapeHtml(toDisplayDate(defaultStart))}">
             </div>
             <div>
               <label class="field-label text-xs" for="export-end-date">ถึงวันที่</label>
-              <input type="date" id="export-end-date" class="field-input w-full" value="${Utils.escapeHtml(defaultEnd)}">
+              <input type="text" id="export-end-date" class="field-input w-full" placeholder="วว/ดด/ปปปป" autocomplete="off" value="${Utils.escapeHtml(toDisplayDate(defaultEnd))}">
             </div>
           </div>
 
@@ -352,9 +370,26 @@
     const endInp = document.getElementById('export-end-date');
     const previewBox = document.getElementById('export-preview-box');
 
+    let exportRangePicker = null;
+    if (typeof Litepicker !== 'undefined' && startInp && endInp) {
+      exportRangePicker = new Litepicker({
+        element: startInp,
+        elementEnd: endInp,
+        singleMode: false,
+        format: 'DD/MM/YYYY',
+        lang: 'th-TH',
+        autoApply: true,
+        setup: (picker) => {
+          picker.on('selected', () => {
+            updatePreview();
+          });
+        }
+      });
+    }
+
     function updatePreview() {
-      const s = startInp.value;
-      const e = endInp.value;
+      const s = toIsoDate(startInp.value);
+      const e = toIsoDate(endInp.value);
       const matched = recentGroups.filter(g => {
         const d = String(g.date || '').slice(0, 10);
         if (s && d < s) return false;
@@ -374,8 +409,8 @@
     const form = document.getElementById('export-backup-form');
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      const startDate = startInp.value || null;
-      const endDate = endInp.value || null;
+      const startDate = toIsoDate(startInp.value) || null;
+      const endDate = toIsoDate(endInp.value) || null;
       const customName = (document.getElementById('export-backup-name')?.value || '').trim();
 
       if (startDate && endDate && startDate > endDate) {
@@ -446,11 +481,11 @@
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="field-label text-xs" for="cutoff-start-date">ตั้งแต่วันที่ <span class="text-red-500">*</span></label>
-              <input type="date" id="cutoff-start-date" class="field-input w-full" value="${Utils.escapeHtml(defaultStart)}" required>
+              <input type="text" id="cutoff-start-date" class="field-input w-full" placeholder="วว/ดด/ปปปป" autocomplete="off" value="${Utils.escapeHtml(toDisplayDate(defaultStart))}" required>
             </div>
             <div>
               <label class="field-label text-xs" for="cutoff-end-date">ถึงวันที่ <span class="text-red-500">*</span></label>
-              <input type="date" id="cutoff-end-date" class="field-input w-full" value="${Utils.escapeHtml(defaultEnd)}" required>
+              <input type="text" id="cutoff-end-date" class="field-input w-full" placeholder="วว/ดด/ปปปป" autocomplete="off" value="${Utils.escapeHtml(toDisplayDate(defaultEnd))}" required>
             </div>
           </div>
 
@@ -486,9 +521,26 @@
     const endInp = document.getElementById('cutoff-end-date');
     const previewBox = document.getElementById('cutoff-preview-box');
 
+    let cutoffRangePicker = null;
+    if (typeof Litepicker !== 'undefined' && startInp && endInp) {
+      cutoffRangePicker = new Litepicker({
+        element: startInp,
+        elementEnd: endInp,
+        singleMode: false,
+        format: 'DD/MM/YYYY',
+        lang: 'th-TH',
+        autoApply: true,
+        setup: (picker) => {
+          picker.on('selected', () => {
+            updateCutoffPreview();
+          });
+        }
+      });
+    }
+
     function updateCutoffPreview() {
-      const s = startInp.value;
-      const e = endInp.value;
+      const s = toIsoDate(startInp.value);
+      const e = toIsoDate(endInp.value);
       const matched = recentGroups.filter(g => {
         const d = String(g.date || '').slice(0, 10);
         if (s && d < s) return false;
@@ -512,8 +564,8 @@
     const form = document.getElementById('cutoff-period-form');
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      const startDate = startInp.value;
-      const endDate = endInp.value;
+      const startDate = toIsoDate(startInp.value);
+      const endDate = toIsoDate(endInp.value);
       const customName = (document.getElementById('cutoff-period-name')?.value || '').trim();
       const autoZip = Boolean(document.getElementById('cutoff-auto-zip')?.checked);
 

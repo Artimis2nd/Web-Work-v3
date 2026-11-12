@@ -201,7 +201,7 @@ const OverviewLogic = (() => {
     return sunBased === 0 ? 6 : sunBased - 1; // 0 = Mon, ..., 6 = Sun
   }
 
-  function buildDualMonthCalendarData(logs = [], customStartDate = null, customEndDate = null) {
+  function buildDualMonthCalendarData(logs = [], customStartDate = null, customEndDate = null, dayOverrides = {}) {
     // 1. ดึงวันที่ทำงานจริงทั้งหมดจาก logs พร้อมนับจำนวนคนงานจริงในแต่ละวัน (Unique Workers Map)
     const allWorkDates = Array.from(new Set(logs.map(l => Utils.toApiDate(l.Date)).filter(Boolean))).sort();
 
@@ -261,7 +261,12 @@ const OverviewLogic = (() => {
 
         const isInRange = dateIso >= startDate && dateIso <= endDate;
         const isWorkDay = isInRange && workDatesSet.has(dateIso);
-        const isOffDay = isInRange && !workDatesSet.has(dateIso);
+        const override = (isInRange && dayOverrides) ? dayOverrides[dateIso] : null;
+        const overrideType = override ? override.type : null; // 'factory' | 'company_holiday'
+        const overrideNote = override ? (override.note || '') : '';
+        const isFactoryDay = !isWorkDay && isInRange && overrideType === 'factory';
+        const isCompanyHoliday = !isWorkDay && isInRange && overrideType === 'company_holiday';
+        const isOffDay = isInRange && !isWorkDay && !isFactoryDay && !isCompanyHoliday;
         const workerCount = dailyWorkersMap.has(dateIso) ? dailyWorkersMap.get(dateIso).size : 0;
 
         cells.push({
@@ -271,6 +276,10 @@ const OverviewLogic = (() => {
           isInRange,
           isWorkDay,
           isOffDay,
+          isFactoryDay,
+          isCompanyHoliday,
+          overrideType,
+          overrideNote,
           workerCount
         });
       }
@@ -331,6 +340,8 @@ const OverviewLogic = (() => {
     // คำนวณสถิติภาพรวมในช่วงวันที่
     let totalRangeDays = 0;
     let totalWorkDays = 0;
+    let totalFactoryDays = 0;
+    let totalCompanyHolidayDays = 0;
     let totalOffDays = 0;
 
     let cur = new Date(startDate + 'T00:00:00');
@@ -341,7 +352,15 @@ const OverviewLogic = (() => {
       if (workDatesSet.has(iso)) {
         totalWorkDays++;
       } else {
-        totalOffDays++;
+        const ov = dayOverrides ? dayOverrides[iso] : null;
+        const ot = ov ? ov.type : null;
+        if (ot === 'factory') {
+          totalFactoryDays++;
+        } else if (ot === 'company_holiday') {
+          totalCompanyHolidayDays++;
+        } else {
+          totalOffDays++;
+        }
       }
       cur.setDate(cur.getDate() + 1);
     }
@@ -351,6 +370,8 @@ const OverviewLogic = (() => {
       endDate,
       totalRangeDays,
       totalWorkDays,
+      totalFactoryDays,
+      totalCompanyHolidayDays,
       totalOffDays,
       month1,
       month2

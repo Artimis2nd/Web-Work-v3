@@ -14,6 +14,31 @@
     return false;
   }
 
+  // จัดเรียงคนงานตามเงื่อนไขเดียวกับ workers.html:
+  // 1. สถานะ: ทำงานอยู่ (Active) ขึ้นก่อน พักงาน (Inactive)
+  // 2. ตำแหน่ง: หัวหน้างาน (Supervisor) ขึ้นก่อน คนงาน (Worker)
+  // 3. ค่าแรงต่อวัน: จากมากไปหาน้อย (Descending)
+  // 4. ชื่อภาษาไทย: เรียงตามพยัญชนะไทย ก-ฮ
+  function sortWorkersByStandardOrder(list) {
+    return [...list].sort((a, b) => {
+      const isActiveA = (a.Status || a.status) === 'Active' ? 1 : 0;
+      const isActiveB = (b.Status || b.status) === 'Active' ? 1 : 0;
+      if (isActiveA !== isActiveB) return isActiveB - isActiveA;
+
+      const isSuperA = isSupervisorWorker(a) ? 1 : 0;
+      const isSuperB = isSupervisorWorker(b) ? 1 : 0;
+      if (isSuperA !== isSuperB) return isSuperB - isSuperA;
+
+      const wageA = Number(a.DailyWage ?? a.daily_wage) || 0;
+      const wageB = Number(b.DailyWage ?? b.daily_wage) || 0;
+      if (wageA !== wageB) return wageB - wageA;
+
+      const nameA = String(a.FullName || a.full_name || '');
+      const nameB = String(b.FullName || b.full_name || '');
+      return nameA.localeCompare(nameB, 'th');
+    });
+  }
+
   let rawAllWorkers = [];
   let allWorkers = [];
   let selectedWorkers = new Map(); // id -> { worker, wageType, hours, otHours, fixedAmount }
@@ -182,7 +207,7 @@
             <div class="image-upload-area" id="image-upload-area">
               <div style="font-size:2rem;margin-bottom:0.25rem">&#128247;</div>
               <div style="font-size:0.85rem;color:var(--ink-soft)">
-                คลิกเพื่อเลือกรูปภาพ หรือลากไฟล์มาวางที่นี่
+                คลิกเพื่อเลือกรูปภาพ, ลากไฟล์มาวาง หรือกด Ctrl+V วางจากคลิปบอร์ด
               </div>
               <div style="font-size:0.75rem;color:var(--ink-soft);margin-top:0.25rem">
                 รองรับ JPG, PNG — บีบอัดอัตโนมัติ
@@ -303,6 +328,33 @@
       area.classList.remove('dragover');
       if (e.dataTransfer.files.length) {
         handleFiles(e.dataTransfer.files);
+      }
+    });
+
+    // รองรับการวางรูปภาพจากคลิปบอร์ด (Clipboard Paste / Ctrl+V หรือ Screenshot)
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('paste', (e) => {
+      const clipboardData = e.clipboardData || window.clipboardData;
+      if (!clipboardData) return;
+
+      const items = clipboardData.items;
+      if (!items) return;
+
+      const imageFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type && item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            imageFiles.push(file);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        area.classList.add('dragover');
+        setTimeout(() => area.classList.remove('dragover'), 300);
+        handleFiles(imageFiles);
       }
     });
 
@@ -811,14 +863,16 @@
     newLogSubItemsState.forEach((it) => {
       const name = String(it.name || '').replace(/\s+/g, ' ').trim();
       if (!name) return;
+      const desc = String(it.description || '').replace(/\s+/g, ' ').trim();
       const added = Number(it.added_qty) || 0;
       const currPct = it.status === 'Completed' ? 100 : (Number(it.progress_percent) || 50);
       const unitStr = it.unit ? ` ${it.unit}` : '';
       const pctSuffix = `คืบหน้า ${currPct}%(เดิม 0%)`;
+      const descStr = desc ? ` - ${desc}` : '';
       if (added > 0) {
-        activeLines.push(`- (งานเพิ่มหน้างาน) ${name}: ทำได้ ${added}${unitStr} ${pctSuffix}`);
+        activeLines.push(`- (งานเพิ่มหน้างาน) ${name}${descStr}: ทำได้ ${added}${unitStr} ${pctSuffix}`);
       } else {
-        activeLines.push(`- (งานเพิ่มหน้างาน) ${name} ${pctSuffix}`);
+        activeLines.push(`- (งานเพิ่มหน้างาน) ${name}${descStr} (${pctSuffix})`);
       }
     });
 
@@ -940,24 +994,36 @@
             </div>
 
             ${!isCancelled ? `
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                <div>
-                  <label class="text-[11px] text-slate-500 block mb-0.5">ปริมาณที่ทำได้วันนี้ (+ ${unitStr})</label>
-                  <input type="number" step="any" min="0" data-sub-added-idx="${idx}"
-                    class="field-input text-xs py-1" placeholder="กรอกจำนวนที่ทำได้วันนี้"
-                    value="${it.added_qty > 0 ? it.added_qty : ''}">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 items-end">
+                <div class="sm:col-span-2">
+                  <details class="text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
+                    <summary class="cursor-pointer font-medium text-slate-700 hover:text-sky-700 select-none">
+                      📏 ระบุจำนวน/หน่วย (ตัวเลือกเสริม ถ้ามีวัดเป็นตัวเลข)
+                    </summary>
+                    <div class="grid grid-cols-2 gap-2 pt-2 mt-1 border-t border-slate-200">
+                      <div>
+                        <label class="text-[11px] text-slate-500 block mb-0.5">ทำได้วันนี้ (+ ${unitStr})</label>
+                        <input type="number" step="any" min="0" data-sub-added-idx="${idx}"
+                          class="field-input text-xs py-1" placeholder="เช่น 5 ${unitStr}"
+                          value="${it.added_qty > 0 ? it.added_qty : ''}">
+                      </div>
+                      <div>
+                        <label class="text-[11px] text-slate-500 block mb-0.5">เป้าหมายรวม (${unitStr})</label>
+                        <input type="number" step="any" min="0" data-sub-target-idx="${idx}"
+                          class="field-input text-xs py-1" placeholder="เว้นว่าง = นับตามจริง"
+                          value="${hasTarget ? it.target_qty : ''}">
+                      </div>
+                    </div>
+                  </details>
                 </div>
                 <div>
-                  <label class="text-[11px] text-slate-500 block mb-0.5">เป้าหมายรวม (${unitStr}) ${!hasTarget ? '<span class="text-blue-600">(เติมทีหลังได้)</span>' : ''}</label>
-                  <input type="number" step="any" min="0" data-sub-target-idx="${idx}"
-                    class="field-input text-xs py-1" placeholder="เว้นว่าง = นับตามจริง"
-                    value="${hasTarget ? it.target_qty : ''}">
-                </div>
-                <div>
-                  <label class="text-[11px] text-slate-500 block mb-0.5">ความคืบหน้ารายการนี้ (%)</label>
-                  <input type="number" min="0" max="100" data-sub-pct-idx="${idx}"
-                    class="field-input text-xs py-1" placeholder="0-100%"
-                    value="${it.progress_percent || 0}">
+                  <label class="text-[11px] font-semibold text-slate-700 block mb-0.5">ความคืบหน้ารายการนี้ (%)</label>
+                  <div class="relative">
+                    <input type="number" min="0" max="100" data-sub-pct-idx="${idx}"
+                      class="field-input text-xs py-1.5 font-bold text-sky-800 w-full pr-7" placeholder="0-100"
+                      value="${it.progress_percent || 0}">
+                    <span class="absolute right-2 top-1.5 text-xs text-slate-400 font-bold pointer-events-none">%</span>
+                  </div>
                 </div>
               </div>
             ` : ''}
@@ -979,28 +1045,68 @@
     if (!newLogSubItemsState.length) {
       newListEl.innerHTML = '';
     } else {
-      newListEl.innerHTML = newLogSubItemsState.map((nit, nidx) => `
-        <div class="p-3 bg-blue-50/40 rounded-lg border border-blue-200 space-y-2">
+      newListEl.innerHTML = newLogSubItemsState.map((nit, nidx) => {
+        const isCompleted = nit.status === 'Completed' || Number(nit.progress_percent) === 100;
+        const isInProgress = !isCompleted;
+
+        return `
+        <div class="p-3 bg-blue-50/50 rounded-lg border border-blue-200 space-y-2.5">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-blue-800">➕ รายการเพิ่มหน้างาน #${nidx + 1}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold text-blue-900">➕ รายการเพิ่มหน้างาน #${nidx + 1}</span>
+              <div class="flex gap-1">
+                <button type="button" data-new-sub-status-btn="${nidx}" data-val="In Progress"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${isInProgress ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'}">
+                  🔨 กำลังทำ
+                </button>
+                <button type="button" data-new-sub-status-btn="${nidx}" data-val="Completed"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${isCompleted ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50'}">
+                  ✓ เสร็จ 100%
+                </button>
+              </div>
+            </div>
             <button type="button" data-remove-new-sub="${nidx}" class="text-xs text-red-600 hover:underline">🗑️ ลบรายการนี้</button>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+
+          <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
+            <div class="sm:col-span-6">
+              <label class="text-[11px] font-semibold text-slate-700 block mb-0.5">ชื่อรายการที่ทำเพิ่ม</label>
+              <input type="text" data-new-sub-name="${nidx}" class="field-input text-xs py-1.5 w-full"
+                placeholder="เช่น สกัดพื้นคอนกรีต, วางบ่อพักเพิ่ม" value="${Utils.escapeHtml(nit.name || '')}">
+            </div>
+            <div class="sm:col-span-4">
+              <label class="text-[11px] text-slate-600 block mb-0.5">อธิบายสิ่งที่ทำวันนี้</label>
+              <input type="text" data-new-sub-desc="${nidx}" class="field-input text-xs py-1.5 w-full"
+                placeholder="เช่น สกัดไปได้ครึ่งทาง, ขุดหลุมเตรียมวาง" value="${Utils.escapeHtml(nit.description || '')}">
+            </div>
             <div class="sm:col-span-2">
-              <input type="text" data-new-sub-name="${nidx}" class="field-input text-xs py-1 w-full"
-                placeholder="ชื่อรายการที่ทำเพิ่ม (เช่น สกัดพื้น, วางบ่อพัก)" value="${Utils.escapeHtml(nit.name || '')}">
-            </div>
-            <div>
-              <input type="number" step="any" min="0" data-new-sub-qty="${nidx}" class="field-input text-xs py-1 w-full"
-                placeholder="ทำได้วันนี้" value="${nit.added_qty > 0 ? nit.added_qty : ''}">
-            </div>
-            <div>
-              <input type="text" data-new-sub-unit="${nidx}" class="field-input text-xs py-1 w-full"
-                placeholder="หน่วย (เช่น เมตร, จุด)" value="${Utils.escapeHtml(nit.unit || '')}">
+              <label class="text-[11px] font-semibold text-slate-700 block mb-0.5">% งานที่ทำได้</label>
+              <div class="relative">
+                <input type="number" min="0" max="100" data-new-sub-pct="${nidx}" class="field-input text-xs py-1.5 font-bold text-sky-800 w-full pr-6"
+                  placeholder="0-100" value="${nit.progress_percent != null ? nit.progress_percent : 50}">
+                <span class="absolute right-2 top-1.5 text-xs text-slate-400 font-bold pointer-events-none">%</span>
+              </div>
             </div>
           </div>
+
+          <details class="text-[11px] text-slate-500 bg-white/70 p-1.5 rounded border border-blue-100">
+            <summary class="cursor-pointer text-slate-600 hover:text-sky-700 select-none">
+              📏 ระบุปริมาณ/หน่วย (ตัวเลือกเสริม ถ้าต้องการวัดความยาวหรือจำนวน)
+            </summary>
+            <div class="grid grid-cols-2 gap-2 pt-1.5 mt-1 border-t border-blue-100">
+              <div>
+                <input type="number" step="any" min="0" data-new-sub-qty="${nidx}" class="field-input text-xs py-1 w-full"
+                  placeholder="ทำได้วันนี้ (เช่น 5)" value="${nit.added_qty > 0 ? nit.added_qty : ''}">
+              </div>
+              <div>
+                <input type="text" data-new-sub-unit="${nidx}" class="field-input text-xs py-1 w-full"
+                  placeholder="หน่วย (เช่น เมตร, จุด, บ่อ)" value="${Utils.escapeHtml(nit.unit || '')}">
+              </div>
+            </div>
+          </details>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     // ผูก Event Listeners สำหรับรายการย่อยเดิม
@@ -1095,11 +1201,56 @@
       };
     });
 
+    newListEl.querySelectorAll('[data-new-sub-status-btn]').forEach(btn => {
+      btn.onclick = () => {
+        const nidx = Number(btn.getAttribute('data-new-sub-status-btn'));
+        const val = btn.getAttribute('data-val');
+        if (newLogSubItemsState[nidx]) {
+          newLogSubItemsState[nidx].status = val;
+          if (val === 'Completed') {
+            newLogSubItemsState[nidx].progress_percent = 100;
+          } else {
+            if (newLogSubItemsState[nidx].progress_percent === 100) {
+              newLogSubItemsState[nidx].progress_percent = 50;
+            }
+          }
+          renderTaskSubItemsForLog(task);
+          recalculateAndAutoFillFromSubItems(task);
+        }
+      };
+    });
+
     newListEl.querySelectorAll('[data-new-sub-name]').forEach(inp => {
       inp.oninput = () => {
         const nidx = Number(inp.getAttribute('data-new-sub-name'));
         if (newLogSubItemsState[nidx]) {
           newLogSubItemsState[nidx].name = inp.value;
+          recalculateAndAutoFillFromSubItems(task);
+        }
+      };
+    });
+
+    newListEl.querySelectorAll('[data-new-sub-desc]').forEach(inp => {
+      inp.oninput = () => {
+        const nidx = Number(inp.getAttribute('data-new-sub-desc'));
+        if (newLogSubItemsState[nidx]) {
+          newLogSubItemsState[nidx].description = inp.value;
+          recalculateAndAutoFillFromSubItems(task);
+        }
+      };
+    });
+
+    newListEl.querySelectorAll('[data-new-sub-pct]').forEach(inp => {
+      inp.oninput = () => {
+        const nidx = Number(inp.getAttribute('data-new-sub-pct'));
+        if (newLogSubItemsState[nidx]) {
+          const p = Math.max(0, Math.min(100, Number(inp.value) || 0));
+          newLogSubItemsState[nidx].progress_percent = p;
+          if (p >= 100) {
+            newLogSubItemsState[nidx].status = 'Completed';
+          } else {
+            newLogSubItemsState[nidx].status = 'In Progress';
+          }
           recalculateAndAutoFillFromSubItems(task);
         }
       };
@@ -1191,7 +1342,7 @@
     try {
       rawAllWorkers = await Api.getWorkers();
       // แสดงเฉพาะคนงานที่สถานะ ทำงานอยู่ (Active)
-      allWorkers = rawAllWorkers.filter(w => w.Status === 'Active');
+      allWorkers = sortWorkersByStandardOrder(rawAllWorkers.filter(w => w.Status === 'Active'));
       document.getElementById('worker-loading').textContent = '';
       await refreshDailyHoursSummary();
       renderWorkerList();
@@ -1292,6 +1443,7 @@
             const inactiveWorker = rawAllWorkers.find(a => a.FullName === w.workerName);
             if (inactiveWorker) {
               allWorkers.push(inactiveWorker);
+              allWorkers = sortWorkersByStandardOrder(allWorkers);
               worker = inactiveWorker;
             }
           }
@@ -1496,12 +1648,13 @@
             .map(it => ({
               id: it.id,
               name: String(it.name).trim(),
+              description: String(it.description || '').trim(),
               added_qty: Number(it.added_qty) || 0,
               actual_qty: Number(it.added_qty) || 0,
               target_qty: null,
               unit: String(it.unit || '').trim(),
-              status: it.status || 'In Progress',
-              progress_percent: Number(it.progress_percent) || 50,
+              status: it.status || (Number(it.progress_percent) >= 100 ? 'Completed' : 'In Progress'),
+              progress_percent: it.progress_percent != null ? Number(it.progress_percent) : 50,
               issue_note: it.issue_note || ''
             }));
 

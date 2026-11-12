@@ -4,3 +4,4 @@ test/
 __pycache__/
 pc_backups/
 _work/
+_local_data/

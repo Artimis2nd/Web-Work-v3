@@ -1,12 +1,34 @@
 (() => {
   Utils.renderShell('overview.html', 'สรุปภาพรวมงาน');
   const content = document.getElementById('page-content');
-  const { buildDualMonthCalendarData, buildSiteWorkBreakdown, buildDailyWorkScheduleSummary } = OverviewLogic;
+  const overviewLogicObj = (typeof OverviewLogic !== 'undefined' ? OverviewLogic : (typeof window !== 'undefined' && window.OverviewLogic ? window.OverviewLogic : {}));
+  const { buildDualMonthCalendarData, buildSiteWorkBreakdown, buildDailyWorkScheduleSummary } = overviewLogicObj;
 
   let allLogsCache = [];
   let allTasksCache = [];
+  let dayOverridesCache = {};
   let currentFilterStartDate = '';
   let currentFilterEndDate = '';
+
+  let overviewRangePicker = null;
+
+  function toDisplayDate(isoStr) {
+    if (!isoStr) return '';
+    const clean = String(isoStr).slice(0, 10);
+    const parts = clean.split('-');
+    if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0];
+    return clean;
+  }
+
+  function toIsoDate(displayStr) {
+    if (!displayStr) return '';
+    const clean = String(displayStr).trim();
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      if (parts.length === 3) return parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0');
+    }
+    return clean;
+  }
 
   const DAY_NAMES = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
 
@@ -18,11 +40,11 @@
           <div class="flex flex-wrap items-end gap-3">
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">📅 ตั้งแต่วันที่</label>
-              <input type="date" id="f-start-date" class="px-2.5 py-1.5 border border-slate-300 rounded text-xs text-slate-800 bg-white font-mono h-9">
+              <input type="text" id="f-start-date" class="px-2.5 py-1.5 border border-slate-300 rounded text-xs text-slate-800 bg-white font-mono h-9" placeholder="วว/ดด/ปปปป" autocomplete="off">
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">📅 ถึงวันที่</label>
-              <input type="date" id="f-end-date" class="px-2.5 py-1.5 border border-slate-300 rounded text-xs text-slate-800 bg-white font-mono h-9">
+              <input type="text" id="f-end-date" class="px-2.5 py-1.5 border border-slate-300 rounded text-xs text-slate-800 bg-white font-mono h-9" placeholder="วว/ดด/ปปปป" autocomplete="off">
             </div>
             <button id="btn-reset-period" class="btn btn-outline text-xs px-3 py-1.5 h-9 inline-flex items-center gap-1.5">
               🔄 ทั้งหมดในรอบนี้
@@ -44,15 +66,40 @@
       </div>
     `;
 
-    document.getElementById('f-start-date').addEventListener('change', (e) => {
-      currentFilterStartDate = e.target.value;
-      renderReport();
-    });
+    const startInp = document.getElementById('f-start-date');
+    const endInp = document.getElementById('f-end-date');
 
-    document.getElementById('f-end-date').addEventListener('change', (e) => {
-      currentFilterEndDate = e.target.value;
-      renderReport();
-    });
+    if (typeof Litepicker !== 'undefined' && startInp && endInp) {
+      overviewRangePicker = new Litepicker({
+        element: startInp,
+        elementEnd: endInp,
+        singleMode: false,
+        format: 'DD/MM/YYYY',
+        lang: 'th-TH',
+        autoApply: true,
+        setup: (picker) => {
+          picker.on('selected', (date1, date2) => {
+            currentFilterStartDate = date1 ? date1.format('YYYY-MM-DD') : '';
+            currentFilterEndDate = date2 ? date2.format('YYYY-MM-DD') : '';
+            renderReport();
+          });
+        }
+      });
+    }
+
+    if (startInp) {
+      startInp.addEventListener('change', (e) => {
+        currentFilterStartDate = toIsoDate(e.target.value);
+        renderReport();
+      });
+    }
+
+    if (endInp) {
+      endInp.addEventListener('change', (e) => {
+        currentFilterEndDate = toIsoDate(e.target.value);
+        renderReport();
+      });
+    }
 
     document.getElementById('btn-reset-period').addEventListener('click', () => {
       resetToDefaultPeriod();
@@ -76,8 +123,11 @@
     }
     const inpStart = document.getElementById('f-start-date');
     const inpEnd = document.getElementById('f-end-date');
-    if (inpStart) inpStart.value = currentFilterStartDate;
-    if (inpEnd) inpEnd.value = currentFilterEndDate;
+    if (inpStart) inpStart.value = toDisplayDate(currentFilterStartDate);
+    if (inpEnd) inpEnd.value = toDisplayDate(currentFilterEndDate);
+    if (overviewRangePicker && currentFilterStartDate && currentFilterEndDate) {
+      overviewRangePicker.setDateRange(toDisplayDate(currentFilterStartDate), toDisplayDate(currentFilterEndDate));
+    }
   }
 
   function renderMonthCalendarHtml(monthData) {
@@ -108,15 +158,50 @@
                 </div>
               `;
             }
+            if (cell.isFactoryDay) {
+              const noteTxt = cell.overrideNote ? Utils.escapeHtml(cell.overrideNote) : 'ทำงานโรงงาน';
+              return `
+                <div class="h-14 border-r border-b border-slate-200 p-1 flex flex-col items-center justify-between bg-sky-50/60 hover:bg-sky-100 cursor-pointer transition-colors relative group"
+                  onclick="window._openDayOverrideModal('${cell.dateIso}', 'factory', '${Utils.escapeHtml(cell.overrideNote || '')}')"
+                  title="ทำงานที่โรงงาน (${Utils.formatDate(cell.dateIso)}) - คลิกเพื่อเปลี่ยนสถานะ">
+                  <div class="w-6 h-6 rounded-full bg-sky-500 text-white font-mono font-bold text-xs flex items-center justify-center shadow-xs">
+                    ${cell.dayNumber}
+                  </div>
+                  <div class="text-[9.5px] font-bold text-sky-700 leading-tight text-center whitespace-nowrap tracking-tighter w-full" title="${noteTxt}">
+                    โรงงาน
+                  </div>
+                  <span class="no-print absolute top-0.5 right-1 text-[9px] text-sky-400 opacity-0 group-hover:opacity-100">✏️</span>
+                </div>
+              `;
+            }
+            if (cell.isCompanyHoliday) {
+              const noteTxt = cell.overrideNote ? Utils.escapeHtml(cell.overrideNote) : 'หยุดบริษัท';
+              return `
+                <div class="h-14 border-r border-b border-slate-200 p-1 flex flex-col items-center justify-between bg-amber-50/60 hover:bg-amber-100 cursor-pointer transition-colors relative group"
+                  onclick="window._openDayOverrideModal('${cell.dateIso}', 'company_holiday', '${Utils.escapeHtml(cell.overrideNote || '')}')"
+                  title="วันหยุดบริษัท (${Utils.formatDate(cell.dateIso)}) - คลิกเพื่อเปลี่ยนสถานะ">
+                  <div class="w-6 h-6 rounded-full bg-amber-500 text-white font-mono font-bold text-xs flex items-center justify-center shadow-xs">
+                    ${cell.dayNumber}
+                  </div>
+                  <div class="text-[9.5px] font-bold text-amber-700 leading-tight text-center whitespace-nowrap tracking-tighter w-full" title="${noteTxt}">
+                    หยุด
+                  </div>
+                  <span class="no-print absolute top-0.5 right-1 text-[9px] text-amber-500 opacity-0 group-hover:opacity-100">✏️</span>
+                </div>
+              `;
+            }
             if (cell.isOffDay) {
               return `
-                <div class="h-14 border-r border-b border-slate-200 p-1 flex flex-col items-center justify-between bg-red-50/40 hover:bg-red-50 transition-colors" title="หยุดงาน (${Utils.formatDate(cell.dateIso)})">
+                <div class="h-14 border-r border-b border-slate-200 p-1 flex flex-col items-center justify-between bg-red-50/40 hover:bg-red-100 cursor-pointer transition-colors relative group"
+                  onclick="window._openDayOverrideModal('${cell.dateIso}', 'off', '')"
+                  title="หยุดงานจริง (${Utils.formatDate(cell.dateIso)}) - คลิกเพื่อเปลี่ยนเป็นไปโรงงานหรือวันหยุดบริษัท">
                   <div class="w-6 h-6 rounded-full bg-red-100 text-red-700 border border-red-400 font-mono font-bold text-xs flex items-center justify-center">
                     ${cell.dayNumber}
                   </div>
                   <div class="text-[10px] font-semibold text-red-600 leading-tight">
                     หยุดงาน
                   </div>
+                  <span class="no-print absolute top-0.5 right-1 text-[9px] text-red-400 opacity-0 group-hover:opacity-100">✏️</span>
                 </div>
               `;
             }
@@ -198,7 +283,7 @@
     }
 
     // 1. คำนวณข้อมูลปฏิทิน 2 เดือน
-    const calendarData = buildDualMonthCalendarData(allLogsCache, currentFilterStartDate, currentFilterEndDate);
+    const calendarData = buildDualMonthCalendarData(allLogsCache, currentFilterStartDate, currentFilterEndDate, dayOverridesCache);
 
     // 2. คำนวณข้อมูลแจกแจงแยกตามหน้างาน (Site Daily Breakdown)
     const siteBreakdowns = buildSiteWorkBreakdown(allLogsCache, allTasksCache, currentFilterStartDate, currentFilterEndDate);
@@ -223,32 +308,53 @@
             </div>
           </div>
 
-          <!-- แถบตัวเลขสรุปวันทำงานและวันหยุด -->
+          <!-- แถบตัวเลขสรุปวันทำงานและวันหยุด (แยกเข้าทำหน้างาน, ไปโรงงาน, วันหยุดบริษัท, และหยุดจริง) -->
           <div class="flex items-center gap-2 flex-wrap text-xs">
-            <div class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900">
+            <div class="px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900">
               <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-600 mr-1.5"></span>
-              เข้าทำงาน: <strong>${calendarData.totalWorkDays} วัน</strong>
+              หน้างาน: <strong>${calendarData.totalWorkDays} วัน</strong>
             </div>
-            <div class="px-3 py-1.5 rounded-lg bg-red-50 border border-red-300 text-red-900">
+            ${calendarData.totalFactoryDays > 0 ? `
+              <div class="px-2.5 py-1.5 rounded-lg bg-sky-50 border border-sky-300 text-sky-900">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-sky-500 mr-1.5"></span>
+                โรงงาน: <strong>${calendarData.totalFactoryDays} วัน</strong>
+              </div>
+            ` : ''}
+            ${calendarData.totalCompanyHolidayDays > 0 ? `
+              <div class="px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500 mr-1.5"></span>
+                หยุดบริษัท: <strong>${calendarData.totalCompanyHolidayDays} วัน</strong>
+              </div>
+            ` : ''}
+            <div class="px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-300 text-red-900">
               <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 mr-1.5"></span>
               ไม่ได้ทำงาน: <strong>${calendarData.totalOffDays} วัน</strong>
             </div>
           </div>
         </div>
 
-        <!-- คำอธิบายสัญลักษณ์ (Legend) -->
-        <div class="flex items-center gap-4 text-xs text-slate-600 mb-3 px-1 flex-wrap">
-          <div class="flex items-center gap-1.5">
-            <div class="w-4 h-4 rounded-full bg-emerald-600"></div>
-            <span>วันที่ลงงาน (มีบันทึกงานประจำวัน)</span>
+        <!-- คำอธิบายสัญลักษณ์ (Legend) พร้อมคำแนะนำคลิกปรับสถานะ -->
+        <div class="flex items-center justify-between text-xs text-slate-600 mb-3 px-1 flex-wrap gap-2">
+          <div class="flex items-center gap-3.5 flex-wrap">
+            <div class="flex items-center gap-1.5">
+              <div class="w-3.5 h-3.5 rounded-full bg-emerald-600"></div>
+              <span>ลงงานหน้างาน</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <div class="w-3.5 h-3.5 rounded-full bg-sky-500"></div>
+              <span>ทำงานที่โรงงาน</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <div class="w-3.5 h-3.5 rounded-full bg-amber-500"></div>
+              <span>วันหยุดบริษัท</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <div class="w-3.5 h-3.5 rounded-full bg-red-100 border border-red-500"></div>
+              <span>ไม่ได้ทำงานจริง</span>
+            </div>
           </div>
-          <div class="flex items-center gap-1.5">
-            <div class="w-4 h-4 rounded-full bg-red-100 border border-red-500"></div>
-            <span>วันที่ไม่ได้ทำงาน (ไม่มีบันทึกงาน)</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <div class="w-4 h-4 text-slate-400 font-mono text-center text-xs">15</div>
-            <span>นอกช่วงรอบงาน</span>
+          <div class="no-print text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+            💡 <em>คลิกที่ช่องวันที่ในปฏิทิน เพื่อเปลี่ยนสถานะเป็น โรงงาน / วันหยุดบริษัท ได้ทันที</em>
           </div>
         </div>
 
@@ -349,15 +455,128 @@
     }).join('');
   }
 
+  
+  // ฟังก์ชันเปิดหน้าต่างคลิกเปลี่ยนสถานะวันที่บนปฏิทิน
+  window._openDayOverrideModal = function(dateIso, currentType, currentNote) {
+    const existing = document.getElementById('day-override-modal-backdrop');
+    if (existing) existing.remove();
+
+    const thaiDateText = Utils.formatDate(dateIso);
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'day-override-modal-backdrop';
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="modal-box" style="max-width: 440px;">
+        <div class="modal-header">
+          <h3 class="font-display text-base font-bold text-slate-900">
+            🗓️ กำหนดสถานะวันที่: ${thaiDateText}
+          </h3>
+          <button type="button" id="btn-close-override-modal" class="btn btn-outline btn-sm">✕ ปิด</button>
+        </div>
+
+        <div class="modal-body space-y-4">
+          <div class="text-xs text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded border border-slate-200">
+            วันดังกล่าวไม่มีบันทึกประจำวันหน้างาน คุณสามารถเลือกได้ว่าวันนี้ส่งคนงานไปทำงานที่โรงงาน หรือเป็นวันหยุดของบริษัท เพื่อให้ระบบคำนวณวันไม่มาทำงานได้อย่างแม่นยำ
+          </div>
+
+          <div class="space-y-2">
+            <label class="block text-xs font-semibold text-slate-700">เลือกประเภทสถานะ:</label>
+
+            <!-- ตัวเลือก 1: ทำงานที่โรงงาน (สีฟ้า) -->
+            <label class="flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${currentType === 'factory' ? 'border-sky-500 bg-sky-50/60 ring-1 ring-sky-500' : 'border-slate-200 hover:bg-slate-50'}">
+              <input type="radio" name="day-override-radio" value="factory" class="mt-0.5 text-sky-600" ${currentType === 'factory' ? 'checked' : ''}>
+              <div class="text-xs">
+                <div class="font-bold text-sky-900 flex items-center gap-1.5">
+                  <span class="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block"></span>
+                  🏢 ไปทำงานที่โรงงาน (สีฟ้า)
+                </div>
+                <div class="text-slate-500 text-[11px] mt-0.5">คนงานมีงานทำ (ถูกส่งไปช่วยงานในโรงงาน) ไม่นับเป็นวันหยุด</div>
+              </div>
+            </label>
+
+            <!-- ตัวเลือก 2: วันหยุดของบริษัท (สีส้ม) -->
+            <label class="flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${currentType === 'company_holiday' ? 'border-amber-500 bg-amber-50/60 ring-1 ring-amber-500' : 'border-slate-200 hover:bg-slate-50'}">
+              <input type="radio" name="day-override-radio" value="company_holiday" class="mt-0.5 text-amber-600" ${currentType === 'company_holiday' ? 'checked' : ''}>
+              <div class="text-xs">
+                <div class="font-bold text-amber-900 flex items-center gap-1.5">
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+                  🏖️ วันหยุดของบริษัท (สีส้ม)
+                </div>
+                <div class="text-slate-500 text-[11px] mt-0.5">วันหยุดตามรอบบริษัท ไม่นับว่าคนงานขาดงาน</div>
+              </div>
+            </label>
+
+            <!-- ตัวเลือก 3: หยุดงานจริง (สีแดง) -->
+            <label class="flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${(currentType === 'off' || !currentType) ? 'border-red-400 bg-red-50/40 ring-1 ring-red-400' : 'border-slate-200 hover:bg-slate-50'}">
+              <input type="radio" name="day-override-radio" value="clear" class="mt-0.5 text-red-600" ${(currentType === 'off' || !currentType) ? 'checked' : ''}>
+              <div class="text-xs">
+                <div class="font-bold text-red-900 flex items-center gap-1.5">
+                  <span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span>
+                  ❌ หยุดงานจริง (สีแดง)
+                </div>
+                <div class="text-slate-500 text-[11px] mt-0.5">นับเป็นวันไม่ได้ทำงานจริงตามปกติ</div>
+              </div>
+            </label>
+          </div>
+
+          <div>
+            <label for="override-note-input" class="block text-xs font-semibold text-slate-700 mb-1">
+              หมายเหตุสั้นๆ (แสดงในช่องปฏิทินได้):
+            </label>
+            <input type="text" id="override-note-input" class="field-input w-full text-xs"
+              placeholder="เช่น ประกอบโครง, ชิ้นงาน B17, หยุดรอบสัปดาห์" value="${Utils.escapeHtml(currentNote || '')}">
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
+            <button type="button" id="btn-cancel-override" class="btn btn-outline text-xs">ยกเลิก</button>
+            <button type="button" id="btn-save-override" class="btn btn-primary text-xs">💾 บันทึกสถานะ</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(backdrop);
+
+    const closeSelf = () => backdrop.remove();
+    document.getElementById('btn-close-override-modal').onclick = closeSelf;
+    document.getElementById('btn-cancel-override').onclick = closeSelf;
+    backdrop.onclick = (e) => { if (e.target === backdrop) closeSelf(); };
+
+    document.getElementById('btn-save-override').onclick = async () => {
+      const selectedRadio = document.querySelector('input[name="day-override-radio"]:checked');
+      const val = selectedRadio ? selectedRadio.value : 'clear';
+      const note = (document.getElementById('override-note-input')?.value || '').trim();
+
+      if (val === 'clear') {
+        delete dayOverridesCache[dateIso];
+      } else {
+        dayOverridesCache[dateIso] = { type: val, note };
+      }
+
+      if (typeof Api !== 'undefined' && Api.saveCalendarDayOverride) {
+        await Api.saveCalendarDayOverride(dateIso, val, note).catch(() => {});
+      }
+
+      closeSelf();
+      renderReport();
+      if (Utils.toast) {
+        Utils.toast(`บันทึกสถานะวันที่ ${thaiDateText} เรียบร้อยแล้ว`, 'success');
+      }
+    };
+  };
+
   async function load() {
     renderLayout();
     try {
-      const [logsData, tasks] = await Promise.all([
+      const [logsData, tasks, overrides] = await Promise.all([
         Api.getLogs({}),
-        Api.getTasks()
+        Api.getTasks(),
+        (Api.getCalendarDayOverrides ? Api.getCalendarDayOverrides() : Promise.resolve({}))
       ]);
       allLogsCache = logsData.logs || [];
       allTasksCache = tasks || [];
+      dayOverridesCache = overrides || {};
       resetToDefaultPeriod();
       renderReport();
     } catch (err) {

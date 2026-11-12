@@ -16,6 +16,32 @@
   let allTasks = [];
   let allWorkers = [];
   let editingTaskId = null;
+
+  let orderDatePicker = null;
+  let timelineDatePicker = null;
+
+  function toDisplayDate(isoStr) {
+    if (!isoStr) return '';
+    const clean = String(isoStr).slice(0, 10);
+    const parts = clean.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return clean;
+  }
+
+  function toIsoDate(displayStr) {
+    if (!displayStr) return '';
+    const clean = String(displayStr).trim();
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      if (parts.length === 3) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+    return clean;
+  }
+
   let activeTimelineTaskId = null;
   let activeCompletionTaskId = null;
   let draftSubItems = [];
@@ -154,7 +180,7 @@
             </div>
             <div>
               <label class="field-label" for="task-input-order-date">วันที่สั่งงาน</label>
-              <input type="date" id="task-input-order-date" name="order_date" class="field-input w-full">
+              <input type="text" id="task-input-order-date" name="order_date" class="field-input w-full" placeholder="วว/ดด/ปปปป" autocomplete="off">
             </div>
           </div>
 
@@ -251,7 +277,7 @@
                 </div>
                 <div>
                   <label class="field-label" for="timeline-input-date">วันที่อัปเดต</label>
-                  <input type="date" id="timeline-input-date" name="date" class="field-input w-full">
+                  <input type="text" id="timeline-input-date" name="date" class="field-input w-full" placeholder="วว/ดด/ปปปป" autocomplete="off">
                 </div>
                 <div>
                   <label class="field-label" for="timeline-input-by">ผู้รายงาน / บันทึก</label>
@@ -1086,7 +1112,9 @@
     document.getElementById('task-input-location').value = '';
     document.getElementById('task-input-assigned').value = '';
     document.getElementById('task-input-ordered-by').value = 'เฮีย';
-    document.getElementById('task-input-order-date').value = getTodayString();
+    const defToday = getTodayString();
+document.getElementById('task-input-order-date').value = toDisplayDate(defToday);
+if (orderDatePicker) { orderDatePicker.setDate(toDisplayDate(defToday)); }
     document.getElementById('task-input-due-date').value = '';
     document.getElementById('task-input-status').value = 'Pending';
     document.getElementById('task-input-percent').value = '0';
@@ -1120,7 +1148,9 @@
     document.getElementById('task-input-location').value = task.location_detail || '';
     document.getElementById('task-input-assigned').value = task.assigned_to || '';
     document.getElementById('task-input-ordered-by').value = task.ordered_by || 'เฮีย';
-    document.getElementById('task-input-order-date').value = task.order_date || '';
+    const curOrderDate = task.order_date || '';
+document.getElementById('task-input-order-date').value = toDisplayDate(curOrderDate);
+if (orderDatePicker && curOrderDate) { orderDatePicker.setDate(toDisplayDate(curOrderDate)); }
     document.getElementById('task-input-due-date').value = task.due_date || '';
     document.getElementById('task-input-status').value = task.status || 'Pending';
     document.getElementById('task-input-percent').value = String(task.progress_percent || 0);
@@ -1181,7 +1211,8 @@
     const locationDetail = (document.getElementById('task-input-location')?.value || '').trim();
     const assignedTo = (document.getElementById('task-input-assigned')?.value || '').trim();
     const orderedBy = (document.getElementById('task-input-ordered-by')?.value || '').trim();
-    const orderDate = document.getElementById('task-input-order-date')?.value || getTodayString();
+    const rawOrderDate = document.getElementById('task-input-order-date')?.value;
+    const orderDate = toIsoDate(rawOrderDate) || getTodayString();
     const dueDate = document.getElementById('task-input-due-date')?.value || null;
     const status = document.getElementById('task-input-status')?.value || 'Pending';
     const percent = Math.min(100, Math.max(0, Number(document.getElementById('task-input-percent')?.value) || 0));
@@ -1258,7 +1289,9 @@
     document.getElementById('timeline-modal-subtitle').textContent = `รหัสงาน: ${task.task_code || '#' + task.id} | ไซต์: ${task.site || '-'}`;
 
     document.getElementById('timeline-input-percent').value = String(task.progress_percent || 0);
-    document.getElementById('timeline-input-date').value = getTodayString();
+    const defTlToday = getTodayString();
+document.getElementById('timeline-input-date').value = toDisplayDate(defTlToday);
+if (timelineDatePicker) { timelineDatePicker.setDate(toDisplayDate(defTlToday)); }
     document.getElementById('timeline-input-by').value = task.assigned_to || '';
     document.getElementById('timeline-input-issues').value = task.issues || '';
     document.getElementById('timeline-input-resolution').value = task.resolution || '';
@@ -1647,6 +1680,31 @@
           if (UTILS.toast) UTILS.toast(`📥 เพิ่มไฟล์แนบ ${dt.files.length} รายการเรียบร้อย`, 'success');
         }
       });
+    }
+
+    
+    // เริ่มต้น Litepicker ภาษาไทย สำหรับวันที่สั่งงาน และวันที่อัปเดตไทม์ไลน์
+    if (typeof Litepicker !== 'undefined') {
+      const orderEl = document.getElementById('task-input-order-date');
+      if (orderEl) {
+        orderDatePicker = new Litepicker({
+          element: orderEl,
+          singleMode: true,
+          format: 'DD/MM/YYYY',
+          lang: 'th-TH',
+          autoApply: true
+        });
+      }
+      const tlEl = document.getElementById('timeline-input-date');
+      if (tlEl) {
+        timelineDatePicker = new Litepicker({
+          element: tlEl,
+          singleMode: true,
+          format: 'DD/MM/YYYY',
+          lang: 'th-TH',
+          autoApply: true
+        });
+      }
     }
 
     // Modal 1 controls

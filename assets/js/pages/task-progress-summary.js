@@ -11,6 +11,27 @@
   let filterStartDate = '';
   let filterEndDate = '';
 
+  let summaryRangePicker = null;
+
+  function toDisplayDate(isoStr) {
+    if (!isoStr) return '';
+    const clean = String(isoStr).slice(0, 10);
+    const parts = clean.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return clean;
+  }
+
+  function toIsoDate(displayStr) {
+    if (!displayStr) return '';
+    const clean = String(displayStr).trim();
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    return clean;
+  }
+
+
   function init() {
     if (typeof Utils !== 'undefined' && typeof Utils.renderShell === 'function') {
       Utils.renderShell('task-progress-summary.html', 'สรุปความคืบหน้า');
@@ -26,11 +47,11 @@
           <div class="flex flex-wrap items-end gap-3">
             <div class="w-44">
               <label for="filter-start-date" class="block text-xs font-semibold text-slate-700 mb-1">📅 ตั้งแต่วันที่</label>
-              <input type="date" id="filter-start-date" class="field-input text-xs w-full" style="height:36px;padding-top:0.25rem;padding-bottom:0.25rem;">
+              <input type="text" id="filter-start-date" class="field-input text-xs w-full" style="height:36px;padding-top:0.25rem;padding-bottom:0.25rem;" placeholder="วว/ดด/ปปปป" autocomplete="off">
             </div>
             <div class="w-44">
               <label for="filter-end-date" class="block text-xs font-semibold text-slate-700 mb-1">📅 ถึงวันที่</label>
-              <input type="date" id="filter-end-date" class="field-input text-xs w-full" style="height:36px;padding-top:0.25rem;padding-bottom:0.25rem;">
+              <input type="text" id="filter-end-date" class="field-input text-xs w-full" style="height:36px;padding-top:0.25rem;padding-bottom:0.25rem;" placeholder="วว/ดด/ปปปป" autocomplete="off">
             </div>
           </div>
 
@@ -66,15 +87,33 @@
     const resetBtn = document.getElementById('btn-reset-dates');
     const printBtn = document.getElementById('btn-print-summary');
 
+    if (typeof Litepicker !== 'undefined' && startInp && endInp) {
+      summaryRangePicker = new Litepicker({
+        element: startInp,
+        elementEnd: endInp,
+        singleMode: false,
+        format: 'DD/MM/YYYY',
+        lang: 'th-TH',
+        autoApply: true,
+        setup: (picker) => {
+          picker.on('selected', (date1, date2) => {
+            filterStartDate = date1 ? date1.format('YYYY-MM-DD') : '';
+            filterEndDate = date2 ? date2.format('YYYY-MM-DD') : '';
+            renderSummaryDocument();
+          });
+        }
+      });
+    }
+
     if (startInp) {
       startInp.addEventListener('change', () => {
-        filterStartDate = startInp.value || '';
+        filterStartDate = toIsoDate(startInp.value);
         renderSummaryDocument();
       });
     }
     if (endInp) {
       endInp.addEventListener('change', () => {
-        filterEndDate = endInp.value || '';
+        filterEndDate = toIsoDate(endInp.value);
         renderSummaryDocument();
       });
     }
@@ -107,8 +146,11 @@
 
     const startInp = document.getElementById('filter-start-date');
     const endInp = document.getElementById('filter-end-date');
-    if (startInp) startInp.value = filterStartDate;
-    if (endInp) endInp.value = filterEndDate;
+    if (startInp) startInp.value = toDisplayDate(filterStartDate);
+    if (endInp) endInp.value = toDisplayDate(filterEndDate);
+    if (summaryRangePicker && filterStartDate && filterEndDate) {
+      summaryRangePicker.setDateRange(toDisplayDate(filterStartDate), toDisplayDate(filterEndDate));
+    }
   }
 
   async function loadData() {
