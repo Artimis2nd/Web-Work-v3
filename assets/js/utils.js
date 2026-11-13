@@ -123,7 +123,8 @@ const Utils = (() => {
     { href: 'report.html', label: 'สรุปรายบุคคล', icon: '&#128100;', title: 'สรุปรายบุคคล' },
     { href: 'pivot-report.html', label: 'สรุปรายวัน/ไซต์งาน', icon: '&#128203;', title: 'สรุปรายวัน/ไซต์งาน' },
     { href: 'task-cost-report.html', label: 'สรุปต้นทุนตามงาน', icon: '📊', title: '📊 สรุปต้นทุนตามงาน' },
-    { href: 'workers.html', label: 'จัดการคนงาน', icon: '&#128119;', title: 'จัดการคนงาน' }
+    { href: 'workers.html', label: 'จัดการคนงาน', icon: '&#128119;', title: 'จัดการคนงาน' },
+    { href: 'print-center.html', label: 'จัดการเอกสาร', icon: '🖨️', title: 'จัดการเอกสาร' }
   ];
 
   function normalizePageName(page) {

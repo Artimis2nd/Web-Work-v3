@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>จัดการเอกสาร | ระบบคิดค่าแรงคนงาน</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="assets/css/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/litepicker/dist/css/litepicker.css"/>
+    <style>
+      /* CSS สำหรับพิมพ์ A4 แนวตั้ง พอดีเป๊ะ ไม่หลุดหน้า */
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+      @media print {
+        html, body {
+          width: 210mm !important;
+          height: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #fff !important;
+          color: #000 !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          font-family: 'Sarabun', 'Segoe UI', Tahoma, sans-serif !important;
+        }
+        .no-print, header, nav, #app-shell > div > aside, #app-shell > div > div > header, #app-shell > div > div > nav {
+          display: none !important;
+        }
+        #app-shell, #app-shell > div, #app-shell > div > div, main {
+          padding: 0 !important;
+          margin: 0 !important;
+          max-width: 100% !important;
+          width: 100% !important;
+          display: block !important;
+        }
+        #printable-area {
+          display: block !important;
+          width: 100% !important;
+        }
+        .a4-print-page {
+          width: 210mm !important;
+          height: 297mm !important;
+          min-height: 297mm !important;
+          max-height: 297mm !important;
+          padding: 10mm 12mm !important;
+          margin: 0 auto !important;
+          box-sizing: border-box !important;
+          page-break-after: always !important;
+          break-after: page !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+          display: flex !important;
+          flex-direction: column !important;
+          justify-content: flex-start !important;
+          position: relative !important;
+          background: #fff !important;
+          overflow: hidden !important;
+          box-shadow: none !important;
+          border: none !important;
+        }
+        .a4-print-page:last-child {
+          page-break-after: auto !important;
+          break-after: auto !important;
+        }
+      }
+
+      /* On-screen Preview Styling */
+      .a4-print-page {
+        background: #fff;
+        width: 210mm;
+        height: 297mm;
+        min-height: 297mm;
+        max-height: 297mm;
+        padding: 10mm 12mm;
+        margin: 0 auto 20px auto;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        border: 1px solid #e2e8f0;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* กริดรูปภาพจัดหน้าแบบสมดุล */
+      .photo-grid {
+        display: grid;
+        gap: 8px;
+        flex: 1;
+        min-height: 0;
+        align-content: stretch;
+      }
+      .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+      .grid-rows-2 { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+      .grid-rows-3 { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+      .grid-rows-4 { grid-template-rows: repeat(4, minmax(0, 1fr)); }
+
+      .photo-frame {
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #f8fafc;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+      }
+
+      .photo-img-wrap {
+        width: 100%;
+        flex: 1;
+        min-height: 0;
+        background: #f1f5f9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .photo-img-wrap img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      /* ===== สไตล์สำหรับรายงานค่าแรงรายวัน (จาก summary-print.html) ===== */
+      .site-print-section {
+        page-break-before: always;
+        break-before: page;
+        margin-bottom: 6mm;
+        width: 210mm;
+        max-width: 210mm;
+        padding: 10mm 12mm;
+        box-sizing: border-box;
+        margin-left: auto;
+        margin-right: auto;
+        background: #ffffff;
+      }
+      .site-print-section:first-child {
+        page-break-before: avoid;
+        break-before: avoid;
+      }
+      .site-header-banner {
+        background: #1e293b;
+        color: white;
+        padding: 6px 12px;
+        font-size: 11pt;
+        font-weight: bold;
+        border-radius: 4px;
+        margin-bottom: 5mm;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .print-card {
+        border: 1px solid #475569;
+        border-radius: 4px;
+        margin-bottom: 4.5mm;
+        page-break-inside: avoid;
+        break-inside: avoid;
+        background: #ffffff;
+        overflow: hidden;
+      }
+      .print-card .card-header {
+        background: #f8fafc;
+        border-bottom: 1px solid #cbd5e1;
+        padding: 6px 10px;
+        font-size: 9.5pt;
+      }
+      .print-card .card-header .row-top {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px;
+        font-weight: 500;
+      }
+      .print-card .card-header .row-detail {
+        margin-top: 3px;
+        padding-top: 3px;
+        border-top: 1px dashed #e2e8f0;
+        color: #1e293b;
+      }
+      .print-card .card-header .label {
+        font-weight: bold;
+        color: #334155;
+      }
+      .card-workers-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        column-gap: 18px;
+        row-gap: 2.5px;
+        padding: 6px 10px;
+        font-size: 8.5pt;
+      }
+      .worker-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        border-bottom: 1px dotted #cbd5e1;
+        padding: 1.5px 2px;
+      }
+      .worker-item .worker-name-hours {
+        color: #1e293b;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding-right: 4px;
+      }
+      .worker-item .worker-wage {
+        font-family: monospace;
+        font-weight: 600;
+        color: #0f172a;
+        white-space: nowrap;
+        letter-spacing: -0.3px;
+      }
+      .card-footer {
+        background: #fafafa;
+        border-top: 1px solid #cbd5e1;
+        padding: 5px 10px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .card-footer .totals-box {
+        text-align: right;
+        font-size: 9pt;
+        line-height: 1.45;
+      }
+      .card-footer .sub-row {
+        color: #334155;
+      }
+      .card-footer .total-row {
+        font-size: 10.5pt;
+        font-weight: bold;
+        color: #b91c1c;
+        border-top: 1px solid #94a3b8;
+        margin-top: 2px;
+        padding-top: 2px;
+      }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased min-h-screen">
+    <div id="app-shell">
+      <!-- App Shell injected by Utils.renderShell -->
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/litepicker/dist/litepicker.js"></script>
+    <script src="assets/js/api.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="assets/js/overview-logic.js"></script>
+    <script src="assets/js/pages/print-center.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        PrintCenterPage.init();
+      });
+    </script>
+</body>
+</html>

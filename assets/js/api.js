@@ -773,6 +773,7 @@ const Api = (() => {
           Site: row.Site,
           JobDetail: row.JobDetail,
           RequestedBy: row.RequestedBy,
+          TaskId: row.TaskId != null ? row.TaskId : (row.task_id != null ? row.task_id : null),
           Workers: []
         };
       }

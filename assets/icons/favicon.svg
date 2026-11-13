@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Card Background -->
+  <rect x="4" y="4" width="56" height="56" rx="10" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="3" />
+  
+  <!-- Subtle Grid Lines -->
+  <line x1="12" y1="48" x2="52" y2="48" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" />
+  
+  <!-- Bar 1: Green -->
+  <rect x="15" y="24" width="9" height="24" rx="3" fill="#22C55E" />
+  
+  <!-- Bar 2: Red -->
+  <rect x="27.5" y="31" width="9" height="17" rx="3" fill="#EF4444" />
+  
+  <!-- Bar 3: Blue -->
+  <rect x="40" y="14" width="9" height="34" rx="3" fill="#3B82F6" />
+</svg>
