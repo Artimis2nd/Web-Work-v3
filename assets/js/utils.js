@@ -117,6 +117,7 @@ const Utils = (() => {
   const NAV_ITEMS = [
     { href: 'index.html', label: 'หน้าแรก', icon: '&#128202;', title: 'หน้าแรก' },
     { href: 'tasks.html', label: 'สั่งงานและติดตามงาน', icon: '📋', title: '📋 สั่งงานและติดตามงาน' },
+    { href: 'tasks-archive.html', label: 'คลังประวัติใบงาน', icon: '📦', title: '📦 คลังประวัติใบสั่งงานที่ปิดงวด' },
     { href: 'daily-log.html', label: 'บันทึกงานประจำวัน', icon: '&#128221;', title: 'บันทึกงานประจำวัน' },
     { href: 'task-progress-summary.html', label: 'สรุปความคืบหน้า', icon: '📑', title: '📑 สรุปความคืบหน้า' },
     { href: 'overview.html', label: 'สรุปภาพรวมงาน', icon: '&#128200;', title: 'สรุปภาพรวมงาน' },

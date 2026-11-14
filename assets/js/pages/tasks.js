@@ -114,16 +114,27 @@
           </div>
         </div>
 
-        <!-- Add Task Button -->
-        <button
-          type="button"
-          id="btn-create-task"
-          data-action="create-task"
-          class="btn btn-primary shrink-0 flex items-center justify-center gap-1.5"
-        >
-          <span>➕</span>
-          <span>สั่งงานใหม่</span>
-        </button>
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2 shrink-0 flex-wrap">
+          <a
+            href="tasks-archive.html"
+            id="btn-view-archive"
+            class="btn btn-outline flex items-center justify-center gap-1.5"
+            title="ดูใบสั่งงานที่เสร็จสิ้นและปิดงวดแล้ว จัดเก็บแยกตามรอบงวดงาน"
+          >
+            <span>📦</span>
+            <span>ดูประวัติงานงวดก่อนหน้า</span>
+          </a>
+          <button
+            type="button"
+            id="btn-create-task"
+            data-action="create-task"
+            class="btn btn-primary flex items-center justify-center gap-1.5"
+          >
+            <span>➕</span>
+            <span>สั่งงานใหม่</span>
+          </button>
+        </div>
       </div>
     </div>
 
