@@ -528,6 +528,20 @@ const Api = (() => {
     return imgMap[groupId] || [];
   }
 
+  async function getAllImages() {
+    if (isCloudConfigured()) {
+      const rows = await sbFetch('/rest/v1/log_images?select=group_id,image_urls');
+      const map = {};
+      (rows || []).forEach(r => {
+        if (r && r.group_id) {
+          map[r.group_id] = Array.isArray(r.image_urls) ? r.image_urls : [];
+        }
+      });
+      return map;
+    }
+    return readLocal(LOCAL_KEYS.IMAGES, {});
+  }
+
   async function saveGroupImages(groupId, urls) {
     if (isCloudConfigured()) {
       await sbFetch('/rest/v1/log_images', {
@@ -3098,6 +3112,7 @@ const Api = (() => {
     getTaskMedia,
     listTaskMedia,
     deleteTaskMedia,
+    getAllImages,
     MAX_MEDIA_SIZE_BYTES,
     // Offline PC Manager API
     checkOfflineMode,
