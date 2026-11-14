@@ -2391,7 +2391,8 @@ const Api = (() => {
         body: JSON.stringify({
           name: fileName,
           logs_data: targetLogs,
-          images_data: targetImages
+          images_data: targetImages,
+          tasks_data: allTasksNow
         })
       });
 
@@ -2513,7 +2514,8 @@ const Api = (() => {
         body: JSON.stringify({
           name: fileName,
           logs_data: logs,
-          images_data: imagesData
+          images_data: imagesData,
+          tasks_data: allTasksNow
         })
       });
       return { fileId: created?.[0]?.id, fileName, url: '#', logsCount: logs.length, groupsCount: targetGroupIds.size };
@@ -2546,14 +2548,31 @@ const Api = (() => {
     return { fileId: newBackup.id, fileName, url: '#', logsCount: logs.length, groupsCount: targetGroupIds.size };
   }
 
-  async function clearAllLogs() {
+  async function clearAllLogs(options = {}) {
+    const { archiveCompletedTasks = true } = options || {};
+
     if (isCloudConfigured()) {
       await sbFetch('/rest/v1/daily_logs?id=gt.0', { method: 'DELETE' });
       await sbFetch('/rest/v1/log_images?group_id=neq.__none__', { method: 'DELETE' });
+
+      // ลบใบสั่งงานที่เสร็จสมบูรณ์แล้วออกจากระบบปัจจุบัน (คงเหลืองานที่ยังค้างอยู่)
+      if (archiveCompletedTasks) {
+        const allTasks = await getTasks().catch(() => []);
+        const completedTasks = allTasks.filter(t => t.status === 'Completed' || Number(t.progress) >= 100);
+        for (const ct of completedTasks) {
+          await deleteTask(ct.id).catch(() => {});
+        }
+      }
       return { cleared: true };
     }
+
     writeLocal(LOCAL_KEYS.LOGS, []);
     writeLocal(LOCAL_KEYS.IMAGES, {});
+    if (archiveCompletedTasks) {
+      const rawTasks = readLocal(LOCAL_KEYS.TASKS, []);
+      const keptTasks = rawTasks.filter(t => t.status !== 'Completed' && Number(t.progress) < 100);
+      writeLocal(LOCAL_KEYS.TASKS, keptTasks);
+    }
     return { cleared: true };
   }
 
@@ -2620,7 +2639,10 @@ const Api = (() => {
       imagesData = rows[0].images_data || {};
       createdDate = rows[0].created_at || null;
       workers = await fetchAllWorkers().catch(() => []);
-      allTasks = await getTasks().catch(() => []);
+      allTasks = (rows[0].tasks_data && Array.isArray(rows[0].tasks_data) && rows[0].tasks_data.length > 0)
+        ? rows[0].tasks_data
+        : await getTasks().catch(() => []);
+      completedTasks = allTasks.filter(t => t.status === 'Completed' || Number(t.progress) >= 100);
     } else {
       const backups = readLocal(LOCAL_KEYS.BACKUPS, []);
       const found = backups.find(b => String(b.id) === String(fileId));

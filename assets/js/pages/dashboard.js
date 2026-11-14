@@ -1179,7 +1179,7 @@
     if (clearBtn) {
       clearBtn.addEventListener('click', async () => {
         if (!Utils.verifyPin()) return;
-        const typed = prompt('การกระทำนี้จะลบ "ใบงานทั้งหมด" ออกจากระบบปัจจุบัน\nแนะนำให้กด "Backup ไฟล์" ก่อนทุกครั้ง\n\nพิมพ์คำว่า ลบ เพื่อยืนยันการล้างบันทึก:');
+        const typed = prompt('การกระทำนี้จะสำรองข้อมูลอัตโนมัติ ล้างบันทึกรายวันทั้งหมด และย้ายใบสั่งงานที่เสร็จสิ้น (100%) เข้าชุดสำรอง โดยคงไว้เฉพาะใบสั่งงานที่ยังค้างอยู่เพื่องวดถัดไป\n\nพิมพ์คำว่า ลบ เพื่อยืนยันการเริ่มงวดใหม่:');
         if (typed === null) return;
         if (typed.trim() !== 'ลบ') {
           Utils.toast('ข้อความยืนยันไม่ถูกต้อง — ยกเลิกการล้างบันทึก', 'error');
@@ -1187,18 +1187,23 @@
         }
         try {
           const clearAction = (async () => {
+            try {
+              await Api.backupSpreadsheet({ customName: `สำรองก่อนล้างงวด ${new Date().toLocaleDateString("th-TH")}` });
+            } catch (e) {
+              console.warn('Auto backup before clear error:', e);
+            }
             if (typeof Api.snapshotActiveTasksBeforeClear === 'function') {
               await Api.snapshotActiveTasksBeforeClear();
             }
-            return await Api.clearAllLogs();
+            return await Api.clearAllLogs({ archiveCompletedTasks: true });
           })();
           await Utils.animateProgress(
             clearBtn,
             clearAction,
-            'กำลังบันทึกยอดสะสมและล้างบันทึก...',
+            'กำลังสำรองข้อมูล ย้ายงานที่เสร็จสิ้น และล้างบันทึก...',
             '✅ ล้างสำเร็จ'
           );
-          Utils.toast('ล้างบันทึกเรียบร้อย', 'success');
+          Utils.toast('ล้างบันทึกและเริ่มงวดใหม่เรียบร้อย (คงเหลืองานที่ยังไม่เสร็จ)', 'success');
           load();
         } catch (err) {
           Utils.toast(err.message, 'error');

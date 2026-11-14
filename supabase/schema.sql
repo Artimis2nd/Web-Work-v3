@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS public.log_backups (
     name TEXT NOT NULL,
     logs_data JSONB NOT NULL DEFAULT '[]'::jsonb,
     images_data JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tasks_data JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
