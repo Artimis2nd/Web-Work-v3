@@ -1187,6 +1187,41 @@ const Api = (() => {
       }
     } catch (_) {}
 
+    // หากอยู่ในโหมด Cloud ให้อัปโหลดไฟล์แนบขึ้น Supabase Storage (task_media)
+    if (isCloudConfigured() && typeof dataPayload === 'string') {
+      try {
+        const cfg = getConfig();
+        if (cfg.url && dataPayload.startsWith('data:')) {
+          const ext = isPdf ? 'pdf' : (isVideo ? 'mp4' : (type.includes('png') ? 'png' : 'jpg'));
+          const storageFilename = `task_media/${mediaId}.${ext}`;
+          const cleanB64 = dataPayload.split(',')[1];
+          const byteChars = atob(cleanB64);
+          const byteNumbers = new Array(byteChars.length);
+          for (let i = 0; i < byteChars.length; i++) {
+            byteNumbers[i] = byteChars.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type });
+
+          await fetch(`${cfg.url}/storage/v1/object/${cfg.bucket}/${storageFilename}`, {
+            method: 'POST',
+            headers: {
+              'apikey': cfg.key,
+              'Authorization': `Bearer ${cfg.key}`,
+              'Content-Type': type,
+              'x-upsert': 'true'
+            },
+            body: blob
+          });
+          const publicUrl = `${cfg.url}/storage/v1/object/public/${cfg.bucket}/${storageFilename}`;
+          record.data = publicUrl;
+          record.url = publicUrl;
+        }
+      } catch (err) {
+        console.warn('Upload task media to Supabase failed, fallback to local', err);
+      }
+    }
+
     return {
       id: record.id,
       task_id: record.task_id,
@@ -1216,6 +1251,41 @@ const Api = (() => {
 
     if (localRecord && localRecord.data) {
       return localRecord;
+    }
+
+    // หากอยู่ในโหมด Cloud หรือ localRecord ไม่มีข้อมูล: ค้นหาจาก Supabase Storage
+    if (isCloudConfigured()) {
+      try {
+        const cfg = getConfig();
+        const tasks = await getTasks();
+        for (const t of tasks) {
+          const match = (t.attachments || []).find(a => a && a.id === mediaId);
+          if (match) {
+            const dataUrl = match.data || match.url || (cfg.url ? `${cfg.url}/storage/v1/object/public/${cfg.bucket}/task_media/${mediaId}.jpg` : '');
+            if (dataUrl) {
+              return {
+                id: mediaId,
+                task_id: t.id,
+                name: match.name,
+                type: match.type || 'image/jpeg',
+                media_kind: match.media_kind || 'image',
+                size: match.size || 0,
+                data: dataUrl
+              };
+            }
+          }
+        }
+        if (cfg.url) {
+          const publicUrl = `${cfg.url}/storage/v1/object/public/${cfg.bucket}/task_media/${mediaId}.jpg`;
+          return {
+            id: mediaId,
+            data: publicUrl,
+            name: 'เอกสารแนบ',
+            type: 'image/jpeg',
+            media_kind: 'image'
+          };
+        }
+      } catch (_) {}
     }
 
     // หากในเบราว์เซอร์ไม่มีข้อมูล ให้ลองดึงจากโฟลเดอร์ในเครื่อง E:\#SRRC\Web-Work-v3\_local_data\images\
