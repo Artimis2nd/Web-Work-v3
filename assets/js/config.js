@@ -3,9 +3,9 @@
  * สามารถใส่ค่าตรงนี้ หรือตั้งค่าผ่านปุ่ม "⚙️ ตั้งค่าฐานข้อมูล" บนหน้าเว็บได้เลย
  */
 window.WAGE_CONFIG = {
-  // 1. ค่าเริ่มต้น Supabase (หากเว้นว่าง ระบบจะอ่านจากการตั้งค่าบนหน้าเว็บ หรือทำงานในโหมดฐานข้อมูลในเครื่องอัตโนมัติ)
-  SUPABASE_URL: localStorage.getItem('WAGE_SUPABASE_URL') || '',
-  SUPABASE_ANON_KEY: localStorage.getItem('WAGE_SUPABASE_KEY') || '',
+  // 1. ค่าเริ่มต้น Supabase
+  SUPABASE_URL: localStorage.getItem('WAGE_SUPABASE_URL') || 'https://mtghykjrttqruqdznyyl.supabase.co',
+  SUPABASE_ANON_KEY: localStorage.getItem('WAGE_SUPABASE_KEY') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10Z2h5a2pydHRxcnVxZHpueXlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ2MTU1NzIsImV4cCI6MjExMDE5MTU3Mn0.mzra-buiPFqOyz7ez7WIeT8IqtM8g6OiKRCw0p9Br-4',
   STORAGE_BUCKET: 'wage-images',
 
   // 2. กฎการคำนวณค่าแรง (ตรงตามระบบเดิม 100%)
