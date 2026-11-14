@@ -40,7 +40,7 @@
 
   function init() {
     UTILS.renderShell('tasks-archive.html', 'คลังประวัติใบสั่งงานที่ปิดงวด');
-    const content = document.getElementById('main-content');
+    const content = document.getElementById('page-content') || document.getElementById('main-content');
     if (!content) return;
 
     content.innerHTML = `
@@ -250,8 +250,10 @@
       let tasks = [];
       if (Array.isArray(data.completedTasks) && data.completedTasks.length > 0) {
         tasks = data.completedTasks;
+      } else if (Array.isArray(data.tasks) && data.tasks.length > 0) {
+        const completed = data.tasks.filter(t => t.status === 'Completed' || Number(t.progress) >= 100);
+        tasks = completed.length > 0 ? completed : data.tasks;
       } else if (Array.isArray(data.allTasks) && data.allTasks.length > 0) {
-        // filter completed or take all tasks from this snapshot
         const completed = data.allTasks.filter(t => t.status === 'Completed' || Number(t.progress) >= 100);
         tasks = completed.length > 0 ? completed : data.allTasks;
       }
