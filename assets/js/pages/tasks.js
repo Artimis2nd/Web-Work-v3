@@ -51,12 +51,17 @@
 
   // 2. Base Page Structure (KPI Cards, Action Bar, Task Container, Modals)
   content.innerHTML = `
-    <!-- KPI Summary Cards -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <!-- KPI Summary Cards (5 Status Cards) -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
       <div class="ledger-card kpi-card p-4" style="--tick-color: var(--blueprint);">
         <div class="kpi-label">งานทั้งหมด (Total Tasks)</div>
         <div class="kpi-value text-2xl font-bold mt-1 text-slate-800" id="kpi-total-tasks">0</div>
         <div class="text-xs text-slate-500 mt-1">ใบสั่งงานในระบบทั้งหมด</div>
+      </div>
+      <div class="ledger-card kpi-card p-4" style="--tick-color: #64748b;">
+        <div class="kpi-label">รอดำเนินการ (Pending)</div>
+        <div class="kpi-value text-2xl font-bold mt-1 text-slate-600" id="kpi-pending-tasks">0</div>
+        <div class="text-xs text-slate-500 mt-1">สั่งงานแล้ว รอเริ่มทำ</div>
       </div>
       <div class="ledger-card kpi-card p-4" style="--tick-color: var(--amber);">
         <div class="kpi-label">กำลังทำ (In Progress)</div>
@@ -392,16 +397,19 @@
   // 4. Update KPI Dashboard Cards
   function updateKpiCards(tasks) {
     const total = tasks.length;
+    const pending = tasks.filter(t => t.status === 'Pending').length;
     const inProgress = tasks.filter(t => t.status === 'In Progress').length;
     const blocked = tasks.filter(t => t.status === 'Blocked').length;
     const completed = tasks.filter(t => t.status === 'Completed').length;
 
     const elTotal = document.getElementById('kpi-total-tasks');
+    const elPending = document.getElementById('kpi-pending-tasks');
     const elInProgress = document.getElementById('kpi-inprogress-tasks');
     const elBlocked = document.getElementById('kpi-blocked-tasks');
     const elCompleted = document.getElementById('kpi-completed-tasks');
 
     if (elTotal) elTotal.textContent = String(total);
+    if (elPending) elPending.textContent = String(pending);
     if (elInProgress) elInProgress.textContent = String(inProgress);
     if (elBlocked) elBlocked.textContent = String(blocked);
     if (elCompleted) elCompleted.textContent = String(completed);
