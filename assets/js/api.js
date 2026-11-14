@@ -1608,15 +1608,12 @@ const Api = (() => {
     };
 
     if (isCloudConfigured()) {
-      const cloudPayload = { ...taskPayload };
-      delete cloudPayload.sub_items;
-      delete cloudPayload.attachments;
       const rows = await sbFetch('/rest/v1/tasks', {
         method: 'POST',
         headers: { 'Prefer': 'return=representation' },
-        body: JSON.stringify(cloudPayload)
+        body: JSON.stringify(taskPayload)
       });
-      return mapTaskRowFromDb({ ...(rows?.[0] || {}), sub_items: taskPayload.sub_items, attachments: taskPayload.attachments });
+      return mapTaskRowFromDb(rows?.[0] || taskPayload);
     }
 
     const tasks = readLocal(LOCAL_KEYS.TASKS, []);
@@ -1727,16 +1724,13 @@ const Api = (() => {
     const allLogs = await fetchAllLogRows().catch(() => []);
 
     if (isCloudConfigured()) {
-      const cloudPayload = { ...updatePayload };
-      delete cloudPayload.sub_items;
-      delete cloudPayload.attachments;
       const rows = await sbFetch(`/rest/v1/tasks?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Prefer': 'return=representation' },
-        body: JSON.stringify(cloudPayload)
+        body: JSON.stringify(updatePayload)
       });
       if (!rows || !rows.length) throw new Error('ไม่พบใบสั่งงาน ID: ' + id);
-      return mapTaskRowFromDb({ ...rows[0], sub_items: updatePayload.sub_items, attachments: updatePayload.attachments }, allLogs);
+      return mapTaskRowFromDb(rows[0], allLogs);
     }
 
     const tasks = readLocal(LOCAL_KEYS.TASKS, []);
